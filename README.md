@@ -30,7 +30,7 @@ With a Nexus Premium account no clicks are needed. Frameworks, GitHub mods and d
 
 ## Install
 
-1. Download `CP2077 AI Mod Manager.exe` from the [Releases](../../releases) page and run it. Python is not needed.
+1. Download `CP2077.AI.Mod.Manager.exe` from the [latest release](../../releases/latest) and run it. Python is not needed. Windows SmartScreen may warn about a new, unsigned app: choose "More info" and then "Run anyway".
 2. In **Settings**:
    - Set the Cyberpunk 2077 folder (**Find it for me** looks in Steam, GOG and Epic).
    - Paste your Nexus API key (**Get my key** opens the page; free accounts have one too).
