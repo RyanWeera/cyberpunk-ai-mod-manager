@@ -1,0 +1,18 @@
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+.ignore
+
+# Python
+__pycache__/
+*.pyc
+.ruff_cache/
+
+# Build output: the exe is attached to GitHub Releases instead
+*.exe
+build/
+dist/
+*.spec
+
+# Local notes and reports
+CLAUDE.md
+security-audit-report.md
