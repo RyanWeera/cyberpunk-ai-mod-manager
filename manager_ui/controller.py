@@ -246,7 +246,8 @@ class Controller:
     def install_job(self, j, path):
         s = j["src"]
         mid = j.get("replace") or (f"nexus-{s['mod_id']}-{s['file_id']}" if s["type"] == "nexus" else
-                                   f"gh-{s['repo'].replace('/', '-')}" if s["type"] == "github" else f"{s['type']}-{install.safe(j['name'])}")
+                                   f"gh-{install.safe(s['repo'].replace('/', '-'))}" if s["type"] == "github" else
+                                   f"{s['type']}-{install.safe(j['name'])}")
         new = self.store.staging / f"{mid}.new"  # unpack beside the old copy, swap under the lock (a deploy may be reading it)
         rels = install.install(path, new, j["name"])
         fw = j.get("framework") or FW_BY_REPO.get(s.get("repo", "").lower()) or FW_BY_NEXUS.get(s.get("mod_id"))
@@ -283,7 +284,10 @@ class Controller:
     # ---------- mod list ----------
     def redeploy(self, sync=False, quiet=False):
         def run():
-            n = deploy.deploy(self.store)
+            with self.store.lock:
+                if self.stop.is_set():  # the window is closing: start no new copy
+                    return
+                n = deploy.deploy(self.store)
             if n or not quiet:
                 self.notify("log", f"Mods are set up in the game folder ({n} file change(s))." if n else
                                    "Everything is already set up in the game folder.")

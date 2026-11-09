@@ -1,17 +1,20 @@
 """Cyberpunk 2077 AI Mod Manager. Run: python app.py  (Nexus starts it as: app.py "nxm://...")
 
 Only one window runs. A second start (for example from a Nexus "Mod Manager Download" click)
-hands its nxm:// link to the running window over a localhost socket and exits. Every message
-starts with a random token that the running window writes to the user's own data folder, so
-other users and web pages cannot send it links."""
+hands its nxm:// link to the running window over a per-user named pipe and exits. Both sides
+prove they know a random token that the running window writes to the user's own data folder,
+so other users cannot send links to it or pose as it."""
+import getpass
+import hashlib
 import secrets
-import socket
 import sys
+from multiprocessing import AuthenticationError
+from multiprocessing.connection import Client, Listener
 from pathlib import Path
 
 from shared.store import DATA
 
-PORT = 47077
+PIPE = r"\\.\pipe\CP2077ModManager-" + hashlib.sha256(getpass.getuser().encode()).hexdigest()[:16]
 TOKEN = DATA / "ipc.token"
 NXM_KEY = r"Software\Classes\nxm\shell\open\command"
 
@@ -46,15 +49,18 @@ def nxm_registered():
 def main():
     url = next((a for a in sys.argv[1:] if a.lower().startswith("nxm://")), None)
     try:
-        with socket.create_connection(("127.0.0.1", PORT), timeout=1) as s:
-            s.sendall(f"{TOKEN.read_text('utf-8').strip()} {url or 'show'}".encode())
+        with Client(PIPE, family="AF_PIPE", authkey=TOKEN.read_bytes().strip()) as c:
+            c.send_bytes((url or "show").encode())
         return
-    except OSError:
-        pass
-    server = socket.create_server(("127.0.0.1", PORT))
-    token = secrets.token_hex(16)
+    except (OSError, EOFError, AuthenticationError):
+        pass  # no window of ours is running: become it
+    token = secrets.token_hex(16).encode()
     TOKEN.parent.mkdir(parents=True, exist_ok=True)
-    TOKEN.write_text(token, "utf-8")
+    TOKEN.write_bytes(token)
+    try:
+        server = Listener(PIPE, family="AF_PIPE")  # fails if anyone already holds this pipe name
+    except OSError:
+        server = None  # run without link hand-over rather than not at all
     from manager_ui.ui import run
     run(server, url, register_nxm, nxm_registered, token)
 

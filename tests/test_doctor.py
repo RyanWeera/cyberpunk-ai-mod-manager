@@ -80,6 +80,11 @@ class Doctor(unittest.TestCase):
         self.assertTrue(state.get("verifying"))
         self.assertEqual(doctor.bisect_step(state, True)["culprit"], "d")
 
+    def test_huge_log_line_stays_cheap(self):
+        t = time.perf_counter()
+        doctor.owners_in("error r6/" + "a " * 500_000, doctor.owner_index(self.store), self.game)  # 1 MB, all spaces
+        self.assertLess(time.perf_counter() - t, 2)
+
     def test_update_is_offered_first(self):
         fixes = doctor.mod_fixes(self.store.mod("bad"), lambda m: True)
         self.assertEqual([f["action"][0] for f in fixes], ["update", "disable"])

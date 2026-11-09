@@ -2,7 +2,30 @@
 
 A Windows mod manager for Cyberpunk 2077 that sets your mods up for you and fixes crashes.
 
+<p align="center">
+  <a href="https://github.com/RyanWeera/cyberpunk-ai-mod-manager/releases/latest/download/CP2077.AI.Mod.Manager.exe"><img src="https://img.shields.io/badge/Download_for_Windows-.exe-fcee0a?style=for-the-badge&logo=windows&logoColor=black&labelColor=fcee0a&color=0e1016" alt="Download for Windows"></a>
+</p>
+<p align="center">
+  <a href="https://github.com/RyanWeera/cyberpunk-ai-mod-manager/releases/latest"><img src="https://img.shields.io/github/v/release/RyanWeera/cyberpunk-ai-mod-manager?label=latest" alt="Latest version"></a>
+  <img src="https://img.shields.io/github/downloads/RyanWeera/cyberpunk-ai-mod-manager/total" alt="Downloads">
+  <img src="https://img.shields.io/github/license/RyanWeera/cyberpunk-ai-mod-manager" alt="License: MIT">
+</p>
+
+**One file. No installer. No Python.** Windows 11 (Windows 10 works for most mods). The button always gives you the newest version.
+
 ![Mods tab](docs/screenshot.png)
+
+## Get started in 3 steps
+
+1. **Download and open it.** Click the yellow button above, then double-click `CP2077.AI.Mod.Manager.exe`. You can keep it anywhere, for example on your Desktop.
+   - If Windows shows "Windows protected your PC", click **More info**, then **Run anyway**. Windows shows this for new apps that are not code-signed yet.
+2. **Set it up once (Settings tab).**
+   - Click **Find it for me** to find your Cyberpunk 2077 folder (Steam, GOG or Epic).
+   - Click **Get my key**, copy your personal API key from Nexus, and paste it. Free accounts have one too.
+   - Click **Use this app for Nexus downloads**, so the download buttons on Nexus send files to the app.
+3. **Add mods and play.** In **Add mods**, paste mod links or a collection link and click **Download and set up everything**. When the **Downloads** tab is finished, click **Launch game**. With a free Nexus account you click **Slow download** once per Nexus file (see [below](#nexus-mods-and-free-accounts)).
+
+The yellow banner at the top of the app shows which set-up steps are still missing.
 
 ## What it does
 
@@ -28,17 +51,18 @@ Nexus Mods gives a free account a download only after a person clicks **Slow dow
 
 With a Nexus Premium account no clicks are needed. Frameworks, GitHub mods and direct links never need a click.
 
-## Install
+## Download, check and remove
 
-1. Download `CP2077.AI.Mod.Manager.exe` from the [latest release](../../releases/latest) and run it. Python is not needed. Windows SmartScreen may warn about a new, unsigned app: choose "More info" and then "Run anyway".
-2. In **Settings**:
-   - Set the Cyberpunk 2077 folder (**Find it for me** looks in Steam, GOG and Epic).
-   - Paste your Nexus API key (**Get my key** opens the page; free accounts have one too).
-   - Click **Use this app for Nexus downloads** so the download buttons on Nexus send files to the app.
-3. In **Add mods**, paste your links and click **Download and set up everything**.
-4. Click **Launch game**.
+- **Every version:** the [Releases](../../releases) page.
+- **Check the file (optional):** each release lists the file's SHA-256. In PowerShell, run `Get-FileHash .\CP2077.AI.Mod.Manager.exe` and compare.
+- **Update:** download the newest exe and replace the old one. Your mods and settings stay. If the new exe is in a different folder or has a different name, click **Use this app for Nexus downloads** again. The version is shown in the title bar.
+- **Remove:**
+  1. In the **Mods** list press **Ctrl+A**, then click **Turn on / off** until every row shows ○. This takes the mods' files out of the game folder and puts back the game files they replaced.
+  2. Wait until the status bar says the mods are set up in the game folder, then close the app.
+  3. Delete the exe and the `%LOCALAPPDATA%\CP2077ModManager` folder.
+  4. If you use another mod manager (Vortex, Mod Organizer 2), set it up for Nexus downloads again, so the Nexus download buttons open it.
 
-Requirements: Windows 10 or 11 (the app uses the built-in `tar.exe` and Microsoft Defender).
+Requirements: Windows 11, or Windows 10 (the app uses the built-in `tar.exe` and Microsoft Defender). The `tar.exe` in Windows 10 is older and cannot unpack some `.7z` and `.rar` mods; the app then says so.
 
 ### Run from source
 

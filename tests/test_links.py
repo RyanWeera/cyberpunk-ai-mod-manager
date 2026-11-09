@@ -28,7 +28,8 @@ class Links(unittest.TestCase):
 
     def test_rejects(self):
         for bad in ("https://www.nexusmods.com/skyrimspecialedition/mods/1", "nxm://skyrim/mods/1/files/2", "hello",
-                    "http://example.com/x.zip"):  # plain http could be changed on the way
+                    "http://example.com/x.zip",  # plain http could be changed on the way
+                    "https://github.com/a/b\\..\\..\\x", "https://github.com/a/.."):  # repo names stay plain
             with self.assertRaises(ValueError):
                 parse_link(bad)
 

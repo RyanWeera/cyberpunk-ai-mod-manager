@@ -110,6 +110,8 @@ def parse_link(text):
         return {"type": "url", "url": s}
     if host == "github.com" and len(u.path.strip("/").split("/")) >= 2:
         owner, repo = u.path.strip("/").split("/")[:2]
+        if not re.fullmatch(r"[\w.-]+/[\w.-]+", f"{owner}/{repo}") or ".." in repo:
+            raise ValueError(f"Not a GitHub repository link: {s}")
         return {"type": "github", "repo": f"{owner}/{repo}"}
     if os.path.isfile(s):
         return {"type": "file", "path": os.path.abspath(s)}

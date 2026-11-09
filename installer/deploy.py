@@ -8,6 +8,7 @@ from pathlib import Path
 from shared.store import GAME_EXE
 
 ARCHIVES = "archive/pc/mod"
+MODLIST, LOAD_ORDER = ARCHIVES + "/modlist.txt", "__load_order__"  # deployed[MODLIST] = LOAD_ORDER while we own it
 KEEP = {"archive/pc/mod", "r6/scripts", "r6/tweaks", "r6/input", "red4ext/plugins", "bin/x64",
         "bin/x64/plugins", "bin/x64/plugins/cyber_engine_tweaks/mods", "mods", "engine/config/platform/pc"}
 
@@ -71,7 +72,7 @@ def deploy(store):
         try:
             _switch_game(store, game)
             want = plan(store)
-            gone = [k for k in store.deployed if k not in want]
+            gone = [k for k in store.deployed if k not in want and k != MODLIST]
             for key in gone:
                 _remove(store, game, key)
             changed = len(gone)
@@ -88,8 +89,15 @@ def deploy(store):
                     changed += 1
                 store.deployed[key] = mid
             order = load_order(store, game)
-            if order:
-                (game / ARCHIVES / "modlist.txt").write_text("\n".join(order) + "\n", "utf-8")
+            if order:  # the user's own modlist.txt is backed up once, like any game file we replace
+                f, bak = game / MODLIST, store.backups / MODLIST
+                if MODLIST not in store.deployed and f.exists() and not bak.exists():
+                    bak.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(f, bak)
+                f.write_text("\n".join(order) + "\n", "utf-8")
+                store.deployed[MODLIST] = LOAD_ORDER
+            elif MODLIST in store.deployed:  # no managed archive left: put the user's file back, or remove ours
+                _remove(store, game, MODLIST)
             return changed
         finally:
             store.save()

@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 # Windows 10+ ships bsdtar, which unpacks zip, 7z and rar.
 TAR = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "tar.exe"
@@ -22,7 +22,9 @@ def extract(archive, dest):
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"Unpacking {Path(archive).name} took more than 30 minutes") from None
     if r.returncode:
-        raise RuntimeError(f"Could not unpack {Path(archive).name}: {r.stderr.strip()[-300:]}")
+        hint = (" The tar.exe in Windows 10 cannot open some .7z and .rar files: update to Windows 11, or unpack it "
+                "yourself, zip it, and add the .zip.") if Path(archive).suffix.lower() in (".7z", ".rar") else ""
+        raise RuntimeError(f"Could not unpack {Path(archive).name}: {r.stderr.strip()[-300:]}{hint}")
 
 
 def safe(name):
@@ -30,8 +32,10 @@ def safe(name):
 
 
 def _inside(path):
-    p = Path(path.replace("\\", "/"))
-    return not p.is_absolute() and ".." not in p.parts
+    """A relative path that stays inside its folder. Refuses `..`, and any root or drive: on Windows
+    `\\x`, `/x` and `D:x` are not "absolute", but joining them still leaves the folder."""
+    p = PureWindowsPath(path)
+    return not p.anchor and ".." not in p.parts
 
 
 def fomod_tree(tree, out):
@@ -76,16 +80,24 @@ def fomod_tree(tree, out):
             take(pat.find("files"))
 
     out.mkdir(parents=True, exist_ok=True)  # exists even when the default choices pick no file
+    base_r, out_r = base.resolve(), out.resolve()
+
+    def within(p, root):  # after following any link: still inside?
+        return p.resolve().is_relative_to(root)
+
     for src, dst, tag in picks:
         if not (_inside(src) and _inside(dst)):
-            continue  # never let an installer write outside the mod folder
+            continue  # never let an installer read or write outside the mod folders
         s, d = base / src.replace("\\", "/"), out / dst.replace("\\", "/")
+        if not (within(s, base_r) and within(d, out_r)):
+            continue
         if tag == "folder" and s.is_dir():
             shutil.copytree(s, d, dirs_exist_ok=True, symlinks=True)  # links stay links; layout() drops them
         elif s.is_file() and not s.is_symlink():
             target = d / s.name if not dst or dst.endswith(("/", "\\")) or d.is_dir() else d
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(s, target)
+            if within(target, out_r):
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(s, target)
     return out
 
 

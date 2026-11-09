@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from installer.install import TAR, fomod_tree, install, layout, needs_for
+from installer.install import TAR, _inside, fomod_tree, install, layout, needs_for
 from tests.helpers import make_zip
 
 FOMOD = """<?xml version="1.0" encoding="utf-8"?>
@@ -74,6 +74,13 @@ class Install(unittest.TestCase):
         fomod_tree(tree, out)
         self.assertFalse((self.tmp / "a/evil.archive").exists())  # "..\..\evil.archive" from out
         self.assertEqual([p.name for p in self.tmp.rglob("evil.archive")], [])
+
+    def test_inside_refuses_every_way_out(self):
+        for bad in ("..\\..\\evil.archive", "../x", "\\Users\\Public\\evil.archive", "/Users/Public/evil.archive",
+                    "D:evil.dll", "C:/x", "C:\\x", "\\\\server\\share\\x", "a/../../x"):
+            self.assertFalse(_inside(bad), bad)
+        for ok in ("", "archive\\pc\\mod\\", "archive/pc/mod/a.archive", "Option A", "r6\\scripts"):
+            self.assertTrue(_inside(ok), ok)
 
     def test_fomod_that_picks_nothing_gives_a_clear_error(self):
         empty = FOMOD.replace('type="SelectExactlyOne"', 'type="SelectAny"').replace('"Recommended"', '"Optional"') \

@@ -1,9 +1,12 @@
 """Builds the real window (hidden) on a throwaway store and drives its actions."""
-import socket
 import tempfile
+import threading
 import time
 import tkinter as tk
 import unittest
+import uuid
+from multiprocessing import AuthenticationError
+from multiprocessing.connection import Client, Listener
 from pathlib import Path
 from unittest import mock
 
@@ -98,16 +101,12 @@ class Window(unittest.TestCase):
         self.assertEqual(self.tab_text("Downloads"), "Downloads")
         self.assertIn("All downloads finished", app.status.cget("text"))
 
-    def test_link_socket_needs_the_token(self):
-        server = socket.create_server(("127.0.0.1", 0))
-        port = server.getsockname()[1]
+    def test_link_pipe_needs_the_token_both_ways(self):
+        pipe = rf"\\.\pipe\cp2077mm-test-{uuid.uuid4().hex}"
+        server = Listener(pipe, family="AF_PIPE")
         top = tk.Toplevel(self.root)
-        app = ui.App(top, server=server, store=self.store, token="t0k3n")
+        app = ui.App(top, server=server, store=self.store, token=b"t0k3n")
         self.addCleanup(lambda: (app.ctl.stop.set(), top.after_cancel(app.tick), server.close()))
-
-        def send(text):
-            with socket.create_connection(("127.0.0.1", port), timeout=2) as s:
-                s.sendall(text.encode())
 
         def events():
             time.sleep(0.3)
@@ -117,12 +116,62 @@ class Window(unittest.TestCase):
             return out
 
         with mock.patch.object(app.ctl, "handle_nxm") as nxm:
-            send("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")  # what a web page poking localhost sends
-            send("wrong nxm://cyberpunk2077/mods/1/files/2?key=a&expires=1")
+            with self.assertRaises(AuthenticationError):  # wrong token: the window refuses, nothing is sent
+                with Client(pipe, family="AF_PIPE", authkey=b"wrong") as c:
+                    c.send_bytes(b"nxm://cyberpunk2077/mods/1/files/2?key=a&expires=1")
             self.assertNotIn("show", events())
-            send("t0k3n nxm://cyberpunk2077/mods/1/files/2?key=a&expires=1")
+            with Client(pipe, family="AF_PIPE", authkey=b"t0k3n") as c:
+                c.send_bytes(b"nxm://cyberpunk2077/mods/1/files/2?key=a&expires=1")
             self.assertIn("show", events())
         nxm.assert_called_once()
+
+    def test_pipe_squatter_gets_nothing(self):
+        """A program that holds the pipe name but does not know the token learns no link."""
+        pipe = rf"\\.\pipe\cp2077mm-test-{uuid.uuid4().hex}"
+        got = []
+
+        def squatter():
+            with Listener(pipe, family="AF_PIPE", authkey=b"guess") as ls:
+                try:
+                    with ls.accept() as c:
+                        got.append(c.recv_bytes())
+                except (AuthenticationError, OSError, EOFError):
+                    pass
+
+        t = threading.Thread(target=squatter, daemon=True)
+        t.start()
+        time.sleep(0.2)
+        with self.assertRaises((AuthenticationError, OSError, EOFError)):
+            with Client(pipe, family="AF_PIPE", authkey=b"real-token") as c:
+                c.send_bytes(b"nxm://secret")
+        t.join(3)
+        self.assertEqual(got, [])
+
+    def test_close_waits_for_a_running_copy_and_select_all(self):
+        top = tk.Toplevel(self.root)
+        app = ui.App(top, store=self.store)
+        stage(self.store, mod("a", ["archive/pc/mod/a.archive"]))
+        stage(self.store, mod("b", ["archive/pc/mod/b.archive"]))
+        app.refresh_mods()
+        app.select_all()
+        self.assertEqual(set(app.mods.selection()), {"a", "b"})
+        self.assertIn("1.0.1", top.title())
+        released = []
+
+        def busy_copy():
+            with self.store.lock:  # what a deploy holds while it copies
+                time.sleep(0.5)
+                released.append(time.perf_counter())
+
+        threading.Thread(target=busy_copy, daemon=True).start()
+        time.sleep(0.1)
+        top.after_cancel(app.tick)
+        app.close()
+        self.assertTrue(released and time.perf_counter() >= released[0])  # close returned only after the copy
+        self.assertTrue(app.ctl.stop.is_set())
+        self.store.settings["game_dir"] = str(fake_game(self.tmp))
+        app.ctl.redeploy(sync=True)  # after close: no new copy starts
+        self.assertEqual(self.store.deployed, {})
 
     def test_problem_picker_applies_chosen_fix(self):
         app = self.app

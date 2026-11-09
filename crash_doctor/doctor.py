@@ -57,7 +57,7 @@ def owner_index(store):
 
 def owner_of(path, idx):
     files, dirs = idx
-    s = path.lower().replace("\\", "/").strip("/ ")
+    s = path.lower().replace("\\", "/").strip("/ ")[:300]  # real paths are short; a huge log line must not explode
     cands = [s] + [s[:i] for i in range(len(s) - 1, 0, -1) if s[i] == " "]  # paths may hold spaces
     for c in cands:
         if c in files:

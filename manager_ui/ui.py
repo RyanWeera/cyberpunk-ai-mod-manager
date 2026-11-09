@@ -1,17 +1,19 @@
 """The window. Tk runs on the main thread; Controller events arrive on a queue that _drain polls."""
-import hmac
 import os
 import queue
 import threading
 import time
 import tkinter as tk
 import webbrowser
+from multiprocessing import AuthenticationError
+from multiprocessing.connection import answer_challenge, deliver_challenge
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from manager_ui.controller import CORE, Controller
 from shared.store import Store, find_game
 
+VERSION = "1.0.1"
 BG, PANEL, PANEL2, FG, DIM, ACCENT = "#0e1016", "#181b24", "#232837", "#e8e8e8", "#8a8f9c", "#fcee0a"
 OK, BAD, WARN = "#3ddc84", "#ff6b6b", "#ffb347"
 KEY_PAGE = "https://next.nexusmods.com/settings/api-keys"
@@ -59,7 +61,7 @@ class Tip:
 
 
 class App:
-    def __init__(self, root, server=None, first_url=None, register=None, registered=None, store=None, token=""):
+    def __init__(self, root, server=None, first_url=None, register=None, registered=None, store=None, token=b""):
         self.root, self.events, self.token = root, queue.Queue(), token
         self.register, self.registered = register, registered or (lambda: False)
         self.store = store or Store()
@@ -69,7 +71,8 @@ class App:
         self.ctl = Controller(self.store, lambda kind, payload=None: self.events.put((kind, payload)))
         self.problems, self.was_busy, self.banner_hidden = [], False, False
         self.k = root.winfo_fpixels("1i") / 96  # pixel sizes below are for 100% display scaling
-        root.title("Cyberpunk 2077 AI Mod Manager")
+        root.title(f"Cyberpunk 2077 AI Mod Manager {VERSION}")
+        root.protocol("WM_DELETE_WINDOW", self.close)
         root.geometry(f"{self.px(1180)}x{self.px(760)}")
         root.minsize(self.px(900), self.px(560))
         root.configure(bg=BG)
@@ -211,6 +214,7 @@ class App:
         self.mods.bind("<Double-1>", lambda e: self.toggle())
         self.mods.bind("<space>", lambda e: self.toggle())
         self.mods.bind("<Delete>", lambda e: self.remove())
+        self.mods.bind("<Control-a>", self.select_all)
         self.mods.bind("<Button-1>", self._mods_click, add="+")
         self.mods.bind("<Button-3>", self._mods_menu)
         self.menu = tk.Menu(self.root, tearoff=0, bg=PANEL2, fg=FG, activebackground=ACCENT, activeforeground="#000", bd=0)
@@ -372,6 +376,18 @@ class App:
 
     def say(self, text):
         self.status.configure(text=text)
+
+    def select_all(self, _=None):
+        self.mods.selection_set(self.mods.get_children())
+        return "break"
+
+    def close(self):
+        """Wait for a copy into the game folder that is running now; then no new one starts."""
+        self.say("Finishing the current copy into the game folder…")
+        self.root.update_idletasks()
+        with self.store.lock:
+            self.ctl.stop.set()
+        self.root.destroy()
 
     def redeploy(self):
         if self.store.game():
@@ -778,26 +794,30 @@ class App:
         self.tick = self.root.after(150, self._drain)
 
     def _serve(self, server):
-        """Second app instances (started by nxm:// links) send "<token> <nxm link or show>" here.
-        Anything without the token (another user, a web page poking localhost) is ignored."""
+        """Second app instances (started by nxm:// links) connect to the named pipe here."""
         while True:
-            conn, _ = server.accept()
-            with conn:
-                conn.settimeout(2)
-                try:
-                    data = conn.recv(4096).decode("utf-8", "replace").strip()
-                except OSError:
-                    continue
-            tok, _, msg = data.partition(" ")
-            if not self.token or not hmac.compare_digest(tok, self.token):
-                continue
-            if msg.lower().startswith("nxm://"):
-                self.ctl.bg(self.ctl.handle_nxm, msg)
-            if msg.lower().startswith("nxm://") or msg == "show":
-                self.events.put(("show", None))
+            try:
+                conn = server.accept()
+            except OSError:
+                return  # the pipe was closed
+            threading.Thread(target=self._take, args=(conn,), daemon=True).start()  # a stalled client blocks only itself
+
+    def _take(self, conn):
+        """Both sides prove they know the token; only then is the nxm link (or "show") read."""
+        with conn:
+            try:
+                deliver_challenge(conn, self.token)
+                answer_challenge(conn, self.token)
+                msg = conn.recv_bytes(4096).decode("utf-8", "replace").strip()
+            except (AuthenticationError, OSError, EOFError):
+                return
+        if msg.lower().startswith("nxm://"):
+            self.ctl.bg(self.ctl.handle_nxm, msg)
+        if msg.lower().startswith("nxm://") or msg == "show":
+            self.events.put(("show", None))
 
 
-def run(server=None, first_url=None, register=None, registered=None, token=""):
+def run(server=None, first_url=None, register=None, registered=None, token=b""):
     try:
         import ctypes
         ctypes.windll.shcore.SetProcessDpiAwareness(1)  # sharp text on scaled displays

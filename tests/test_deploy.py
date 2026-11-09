@@ -67,6 +67,25 @@ class Deploy(unittest.TestCase):
         saved = Store(self.store.root)
         self.assertEqual(saved.deployed, {"archive/pc/mod/a.archive": "a"})
 
+    def test_users_own_modlist_is_backed_up_and_put_back(self):
+        f = self.game / "archive/pc/mod/modlist.txt"
+        f.write_text("my_order.archive\n")
+        deploy(self.store)  # no managed archive: the user's file is not touched
+        self.assertEqual(f.read_text(), "my_order.archive\n")
+        stage(self.store, mod("a", ["archive/pc/mod/a.archive"]))
+        deploy(self.store)
+        self.assertEqual(f.read_text().split(), ["a.archive"])
+        self.store.mod("a")["enabled"] = False
+        deploy(self.store)
+        self.assertEqual(f.read_text(), "my_order.archive\n")  # put back
+        self.assertEqual(self.store.deployed, {})
+        stage(self.store, mod("b", ["archive/pc/mod/b.archive"]))
+        f.unlink()
+        deploy(self.store)
+        self.store.mod("b")["enabled"] = False
+        deploy(self.store)
+        self.assertFalse(f.exists())  # ours, so removed when no archive is left
+
     def test_unmanaged_archives_kept_last(self):
         (self.game / "archive/pc/mod/zzz_manual.archive").write_text("x")
         stage(self.store, mod("a", ["archive/pc/mod/a.archive"]))

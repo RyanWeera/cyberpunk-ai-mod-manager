@@ -6,12 +6,34 @@
 __pycache__/
 *.pyc
 .ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
 
 # Build output: the exe is attached to GitHub Releases instead
 *.exe
 build/
 dist/
 *.spec
+
+# Secrets and keys (never commit)
+.env
+.env.*
+*.pem
+*.key
+*.p12
+
+# Editors, OS and local tools
+.vscode/
+.idea/
+.claude/
+Thumbs.db
+desktop.ini
+.DS_Store
+*.log
 
 # Local notes and reports
 CLAUDE.md
