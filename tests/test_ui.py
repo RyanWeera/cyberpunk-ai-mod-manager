@@ -123,6 +123,10 @@ class Window(unittest.TestCase):
             with Client(pipe, family="AF_PIPE", authkey=b"t0k3n") as c:
                 c.send_bytes(b"nxm://cyberpunk2077/mods/1/files/2?key=a&expires=1")
             self.assertIn("show", events())
+            app.ctl.stop.set()  # closing: even the right token is refused, so the sender keeps its link
+            with self.assertRaises((AuthenticationError, OSError, EOFError)):
+                with Client(pipe, family="AF_PIPE", authkey=b"t0k3n") as c:
+                    c.send_bytes(b"nxm://cyberpunk2077/mods/1/files/3?key=a&expires=1")
         nxm.assert_called_once()
 
     def test_pipe_squatter_gets_nothing(self):
@@ -168,7 +172,8 @@ class Window(unittest.TestCase):
         top.after_cancel(app.tick)
         app.close()
         self.assertTrue(app.ctl.stop.is_set())
-        self.assertTrue(top.winfo_exists())  # still open (and responsive) while the copy runs
+        self.assertTrue(top.winfo_exists())  # still open (repaints, takes no input) while the copy runs
+        self.assertTrue(int(top.attributes("-disabled")))
         end = time.time() + 5
         while top.winfo_exists() and time.time() < end:
             self.root.update()

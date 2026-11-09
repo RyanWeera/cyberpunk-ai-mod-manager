@@ -73,10 +73,13 @@ def deploy(store):
     with store.lock:
         try:
             _switch_game(store, game)
-            # A v1.0.0 state file: v1.0.0 wrote modlist.txt whenever one of its archives was on, without
-            # recording it, so that file is ours, not the user's. Checked once, on the first v1.0.1 deploy.
-            ours_untracked = not store.modlist_tracked and MODLIST not in store.deployed and any(
-                k.startswith(ARCHIVES + "/") and k.endswith(".archive") and k.count("/") == 3 for k in store.deployed)
+            if not store.modlist_tracked:  # a v1.0.0 state file: decide once, before anything is copied
+                # v1.0.0 rewrote modlist.txt without recording it whenever an archive was in the folder. If one of
+                # its own archives is on, the file there is its list, so it is ours to replace or remove.
+                if MODLIST not in store.deployed and any(
+                        k.startswith(ARCHIVES + "/") and k.endswith(".archive") and k.count("/") == 3 for k in store.deployed):
+                    store.deployed[MODLIST] = LOAD_ORDER
+                store.modlist_tracked = True  # saved by `finally`, even if a copy below fails
             want = plan(store)
             gone = [k for k in store.deployed if k not in want and k != MODLIST]
             for key in gone:
@@ -97,15 +100,13 @@ def deploy(store):
             managed, others = load_order(store, game)
             if managed:  # the user's own modlist.txt is backed up once, like any game file we replace
                 f, bak = game / MODLIST, store.backups / MODLIST
-                if MODLIST not in store.deployed and f.exists() and not bak.exists() and not ours_untracked:
+                if MODLIST not in store.deployed and f.exists() and not bak.exists():
                     bak.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(f, bak)
                 f.write_text("\n".join(managed + others) + "\n", "utf-8")
                 store.deployed[MODLIST] = LOAD_ORDER
-            elif MODLIST in store.deployed or ours_untracked:  # no managed archive is on: give the folder back
-                store.deployed[MODLIST] = LOAD_ORDER
+            elif MODLIST in store.deployed:  # no managed archive is on: give the folder back
                 _remove(store, game, MODLIST)  # puts the user's file back, or deletes ours
-            store.modlist_tracked = True
             return changed
         finally:
             store.save()

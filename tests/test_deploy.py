@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -100,16 +101,25 @@ class Deploy(unittest.TestCase):
         self.assertEqual(f.read_text(), "zz_user.archive\n# my notes\n")
         self.assertNotIn("archive/pc/mod/modlist.txt", self.store.deployed)
 
+    def as_v100(self):
+        """Reload the store from a state file shaped like v1.0.0's (it has no modlist_tracked key)."""
+        self.store.save()
+        d = json.loads(self.store.file.read_text("utf-8"))
+        d.pop("modlist_tracked")
+        self.store.file.write_text(json.dumps(d), "utf-8")
+        self.store = Store(self.store.root)
+        self.assertFalse(self.store.modlist_tracked)
+
     def test_upgrade_from_v100_does_not_keep_the_old_generated_modlist(self):
         stage(self.store, mod("a", ["archive/pc/mod/a.archive"]))
         deploy(self.store)
         del self.store.deployed["archive/pc/mod/modlist.txt"]  # v1.0.0 did not record the file
-        self.store.modlist_tracked = False  # what a v1.0.0 state file loads as
         (self.store.backups / "archive/pc/mod/modlist.txt").unlink(missing_ok=True)
+        self.as_v100()
         self.store.mod("a")["enabled"] = False
         deploy(self.store)
         self.assertFalse((self.game / "archive/pc/mod/modlist.txt").exists())
-        self.assertTrue(Store(self.store.root).modlist_tracked)  # checked once only
+        self.assertTrue(Store(self.store.root).modlist_tracked)  # decided once only
 
     def user_modlist(self):
         f = self.game / "archive/pc/mod/modlist.txt"
@@ -117,28 +127,35 @@ class Deploy(unittest.TestCase):
         f.write_text("zz_user.archive\n# mine\n")
         return f
 
-    def test_s1_xl_only_mod_never_touches_the_users_modlist(self):
+    def s1(self, upgrade):  # an .xl-only mod never makes the user's modlist.txt ours
         f = self.user_modlist()
         stage(self.store, mod("b", ["archive/pc/mod/b.archive.xl"]))
+        deploy(self.store)
+        if upgrade:
+            self.as_v100()  # deployed holds archive/pc/mod/b.archive.xl, which is not an .archive
         deploy(self.store)
         deploy(self.store)
         self.assertEqual(f.read_text(), "zz_user.archive\n# mine\n")
 
-    def test_s2_users_modlist_survives_after_archive_mod_goes_off(self):
+    def s2(self, upgrade):  # the user's file comes back after an archive mod goes off, and stays
         f = self.user_modlist()
         stage(self.store, mod("a", ["archive/pc/mod/a.archive"]))
         stage(self.store, mod("b", ["archive/pc/mod/b.archive.xl"]))
+        if upgrade:
+            self.as_v100()
         deploy(self.store)
         self.store.mod("a")["enabled"] = False
         deploy(self.store)
         deploy(self.store)
         self.assertEqual(f.read_text(), "zz_user.archive\n# mine\n")
 
-    def test_s3_users_modlist_survives_a_failed_first_deploy(self):
+    def s3(self, upgrade):  # a failed first deploy does not lose the user's file
         f = self.user_modlist()
         stage(self.store, mod("a", ["archive/pc/mod/a.archive", "archive/pc/mod/b.archive"]))
         b = self.store.staging / "a/archive/pc/mod/b.archive"
         b.unlink()
+        if upgrade:
+            self.as_v100()
         with self.assertRaises(OSError):
             deploy(self.store)
         self.assertEqual(f.read_text(), "zz_user.archive\n# mine\n")
@@ -147,6 +164,24 @@ class Deploy(unittest.TestCase):
         self.store.mod("a")["enabled"] = False
         deploy(self.store)
         self.assertEqual(f.read_text(), "zz_user.archive\n# mine\n")
+
+    def test_s1_new(self):
+        self.s1(False)
+
+    def test_s1_upgrade(self):
+        self.s1(True)
+
+    def test_s2_new(self):
+        self.s2(False)
+
+    def test_s2_upgrade(self):
+        self.s2(True)
+
+    def test_s3_new(self):
+        self.s3(False)
+
+    def test_s3_upgrade(self):
+        self.s3(True)
 
     def test_mod_shipping_a_modlist_is_ignored(self):
         stage(self.store, mod("a", ["archive/pc/mod/a.archive", "archive/pc/mod/modlist.txt"]))

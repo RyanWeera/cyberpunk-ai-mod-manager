@@ -8,6 +8,7 @@ import getpass
 import hashlib
 import secrets
 import sys
+import threading
 import time
 from multiprocessing import AuthenticationError
 from multiprocessing.connection import Client, Listener
@@ -47,30 +48,42 @@ def nxm_registered():
         return False
 
 
-def hand_over(msg):
-    """Give msg to the running window. True when it took it."""
-    try:
-        with Client(PIPE, family="AF_PIPE", authkey=TOKEN.read_bytes().strip()) as c:
-            c.send_bytes(msg.encode())
-        return True
-    except (OSError, EOFError, AuthenticationError):
-        return False
+def hand_over(msg, timeout=5):
+    """Give msg to the running window. True when it took it. A pipe holder that never answers cannot
+    block start-up: the attempt runs on a helper thread and counts as failed after `timeout` seconds."""
+    done = []
+
+    def send():
+        try:
+            with Client(PIPE, family="AF_PIPE", authkey=TOKEN.read_bytes().strip()) as c:
+                c.send_bytes(msg.encode())
+            done.append(True)
+        except (OSError, EOFError, AuthenticationError):
+            pass
+
+    t = threading.Thread(target=send, daemon=True)
+    t.start()
+    t.join(timeout)
+    return bool(done)
 
 
 def main():
     url = next((a for a in sys.argv[1:] if a.lower().startswith("nxm://")), None)
     if hand_over(url or "show"):
         return
-    try:
-        server = Listener(PIPE, family="AF_PIPE")  # fails while any window of ours (or anyone) holds the name
-    except OSError:
-        for _ in range(6):  # a window that is just starting: its token appears in a moment
+    for _ in range(20):  # about 10 s: a window that is starting (its token appears) or closing (the pipe frees)
+        try:
+            server = Listener(PIPE, family="AF_PIPE")  # fails while any window of ours (or anyone) holds the name
+            break
+        except OSError:
             time.sleep(0.5)
             if hand_over(url or "show"):
                 return
+    else:
         import ctypes
-        ctypes.windll.user32.MessageBoxW(None, "The mod manager is already running, but it did not answer. If it runs as "
-                                               "administrator, close it and start it normally.", "CP2077 AI Mod Manager", 0x30)
+        ctypes.windll.user32.MessageBoxW(None, "The mod manager is still running and did not answer. If it is closing, try "
+                                               "again in a moment. If it runs as administrator, close it and start it normally.",
+                                         "CP2077 AI Mod Manager", 0x30)
         return
     token = secrets.token_hex(16).encode()  # written only once this process owns the pipe
     TOKEN.parent.mkdir(parents=True, exist_ok=True)

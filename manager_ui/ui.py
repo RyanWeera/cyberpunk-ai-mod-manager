@@ -383,7 +383,8 @@ class App:
         return "break"
 
     def close(self):
-        """No new copy starts; the window stays responsive while a running copy finishes, then closes."""
+        """No new copy starts. The window shows a message and takes no input (it does not freeze) while a
+        running copy finishes, then it closes by itself."""
         if self.ctl.stop.is_set():
             return
         self.ctl.stop.set()
@@ -821,7 +822,7 @@ class App:
         """Both sides prove they know the token; only then is the nxm link (or "show") read."""
         with conn:
             if self.ctl.stop.is_set():
-                return  # closing: refuse, so the sender keeps its link and starts the next window
+                return  # closing: refuse, so the sender keeps its link and opens the next window when this one is gone
             try:
                 deliver_challenge(conn, self.token)
                 answer_challenge(conn, self.token)
