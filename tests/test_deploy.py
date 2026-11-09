@@ -121,6 +121,17 @@ class Deploy(unittest.TestCase):
         self.assertFalse((self.game / "archive/pc/mod/modlist.txt").exists())
         self.assertTrue(Store(self.store.root).modlist_tracked)  # decided once only
 
+    def test_upgrade_that_also_switches_game_folder_cleans_the_old_one(self):
+        stage(self.store, mod("a", ["archive/pc/mod/a.archive"]))
+        deploy(self.store)
+        del self.store.deployed["archive/pc/mod/modlist.txt"]  # v1.0.0 did not record the file it wrote
+        self.as_v100()
+        other = fake_game(Path(tempfile.mkdtemp()))
+        self.store.settings["game_dir"] = str(other)
+        deploy(self.store)
+        self.assertFalse((self.game / "archive/pc/mod/modlist.txt").exists())  # v1.0.0's list left the old folder
+        self.assertEqual((other / "archive/pc/mod/modlist.txt").read_text().split(), ["a.archive"])
+
     def user_modlist(self):
         f = self.game / "archive/pc/mod/modlist.txt"
         (self.game / "archive/pc/mod/zz_user.archive").write_text("x")

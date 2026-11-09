@@ -17,11 +17,24 @@ CET_MODS = "bin/x64/plugins/cyber_engine_tweaks/mods"
 
 
 def extract(archive, dest):
+    """Unpack `archive` into the new folder `dest` with tar.exe.
+    tar reads its command line in the ANSI code page, where "best-fit" turns some Unicode letters (a full-width
+    quote, for one) into real quotes and splits the arguments. So tar only ever sees fixed ASCII names: the
+    archive is linked (or copied) next to `dest` as "archive", and tar runs in that folder. This also keeps
+    user names with non-English letters in the temp path away from tar."""
+    archive, dest = Path(archive), Path(dest)
+    local = dest.parent / "archive"
     try:
-        r = subprocess.run([str(TAR), "-xf", str(archive), "-C", str(dest)], capture_output=True, text=True,
-                           errors="replace", creationflags=NO_WINDOW, timeout=1800)
+        os.link(archive, local)
+    except OSError:
+        shutil.copyfile(archive, local)
+    try:
+        r = subprocess.run([str(TAR), "-xf", local.name, "-C", dest.name], cwd=dest.parent, capture_output=True,
+                           text=True, errors="replace", creationflags=NO_WINDOW, timeout=1800)
     except subprocess.TimeoutExpired:
-        raise RuntimeError(f"Unpacking {Path(archive).name} took more than 30 minutes") from None
+        raise RuntimeError(f"Unpacking {archive.name} took more than 30 minutes") from None
+    finally:
+        local.unlink(missing_ok=True)
     if r.returncode:
         old_windows = sys.getwindowsversion().build < 22000 if hasattr(sys, "getwindowsversion") else False
         hint = (" The tar.exe in Windows 10 cannot open some .7z and .rar files: update to Windows 11, or unpack it "
@@ -94,7 +107,9 @@ def fomod_tree(tree, out):
         if not (within(s, base_r) and within(d, out_r)):
             continue
         if tag == "folder" and s.is_dir():
-            shutil.copytree(s, d, dirs_exist_ok=True, symlinks=True)  # links stay links; layout() drops them
+            if any(x.is_symlink() or x.is_junction() for x in [s, *s.rglob("*")]):
+                continue  # a link in the copy could let a later pick write through it, anywhere on the PC
+            shutil.copytree(s, d, dirs_exist_ok=True)
         elif s.is_file() and not s.is_symlink():
             target = d / s.name if not dst or dst.endswith(("/", "\\")) or d.is_dir() else d
             if within(target, out_r):

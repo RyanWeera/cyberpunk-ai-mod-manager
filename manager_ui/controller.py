@@ -11,7 +11,7 @@ from pathlib import Path
 
 from crash_doctor import doctor, watch
 from downloads import nexus
-from downloads.fetch import FRAMEWORKS, FW_BY_NEXUS, FW_BY_REPO, download, github_latest
+from downloads.fetch import FRAMEWORKS, FW_BY_NEXUS, FW_BY_REPO, download, github_latest, local_copy
 from installer import deploy, install
 from shared.store import GAME_EXE
 from virus_scan import scan
@@ -227,13 +227,12 @@ class Controller:
         elif s["type"] == "url":
             path = download(s["url"], dl, prog)
         else:
-            path = Path(s["path"])
+            path = local_copy(s["path"], dl)  # a plain ASCII name for Defender and tar; the user's file stays as it is
         if self.store.settings["virus_scan"]:
             self._set(j, "Scanning for viruses")
             clean, detail = scan.scan(path)
             if clean is False:
-                if s["type"] != "file":
-                    path.unlink(missing_ok=True)
+                path.unlink(missing_ok=True)  # always our own copy in the downloads folder
                 j["state"] = "failed"
                 return self._set(j, f"Blocked: virus found ({detail})")
             if clean is None:

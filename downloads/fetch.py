@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import shutil
 import time
 import urllib.parse
 import urllib.request
@@ -40,6 +41,23 @@ def github_latest(repo):
     return {"tag": d["tag_name"], "url": asset["browser_download_url"], "name": asset["name"]}
 
 
+def ascii_name(name):
+    """A plain ASCII file name. Windows tools that read their command line in the ANSI code page turn some
+    Unicode letters into quotes ("best-fit"), so a server-chosen name must never reach them as it is."""
+    return re.sub(r"[^A-Za-z0-9._ ()+-]", "_", name).strip(". ") or "download.zip"
+
+
+def local_copy(path, folder):
+    """Put a file the user picked under a plain ASCII name in `folder` (a link when possible, else a copy)."""
+    dest = Path(folder) / ascii_name(Path(path).name)
+    dest.unlink(missing_ok=True)
+    try:
+        os.link(path, dest)
+    except OSError:
+        shutil.copy2(path, dest)
+    return dest
+
+
 def download(url, folder, progress=None, headers=None):
     """Download url into folder. progress(done_bytes, total_bytes) is called about twice a second."""
     req = urllib.request.Request(url, headers={**UA, **(headers or {})})
@@ -48,9 +66,8 @@ def download(url, folder, progress=None, headers=None):
             raise RuntimeError("Refusing a download that is not https")
         cd = r.headers.get("Content-Disposition", "")
         m = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)', cd)
-        name = urllib.parse.unquote(m[1] if m else os.path.basename(urllib.parse.urlparse(r.url).path)) or "download.zip"
-        name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(". ") or "download.zip"
-        dest = Path(folder) / name
+        name = urllib.parse.unquote(m[1] if m else os.path.basename(urllib.parse.urlparse(r.url).path))
+        dest = Path(folder) / ascii_name(name)
         part = dest.with_name(dest.name + ".part")
         total, done, last = int(r.headers.get("Content-Length") or 0), 0, 0.0
         with open(part, "wb") as f:

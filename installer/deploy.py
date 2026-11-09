@@ -72,14 +72,15 @@ def deploy(store):
         raise RuntimeError("Set the Cyberpunk 2077 folder in Settings first.")
     with store.lock:
         try:
-            _switch_game(store, game)
-            if not store.modlist_tracked:  # a v1.0.0 state file: decide once, before anything is copied
+            if not store.modlist_tracked:  # a v1.0.0 state file: decide once, before anything is copied or moved
                 # v1.0.0 rewrote modlist.txt without recording it whenever an archive was in the folder. If one of
-                # its own archives is on, the file there is its list, so it is ours to replace or remove.
+                # its own archives is on, the file there is its list, so it is ours to replace or remove (also in
+                # an old game folder that _switch_game below empties).
                 if MODLIST not in store.deployed and any(
                         k.startswith(ARCHIVES + "/") and k.endswith(".archive") and k.count("/") == 3 for k in store.deployed):
                     store.deployed[MODLIST] = LOAD_ORDER
                 store.modlist_tracked = True  # saved by `finally`, even if a copy below fails
+            _switch_game(store, game)
             want = plan(store)
             gone = [k for k in store.deployed if k not in want and k != MODLIST]
             for key in gone:

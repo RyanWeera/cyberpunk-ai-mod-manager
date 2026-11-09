@@ -36,6 +36,8 @@ desktop.ini
 .DS_Store
 *.log
 
-# Local notes and reports
+# Local notes, reports and crash dumps
 CLAUDE.md
+CLAUDE.local.md
 security-audit-report.md
+*.dmp

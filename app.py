@@ -48,43 +48,44 @@ def nxm_registered():
         return False
 
 
-def hand_over(msg, timeout=5):
-    """Give msg to the running window. True when it took it. A pipe holder that never answers cannot
-    block start-up: the attempt runs on a helper thread and counts as failed after `timeout` seconds."""
-    done = []
+class HandOver(threading.Thread):
+    """One attempt to give msg to the running window, on a helper thread so that a pipe holder that never
+    answers cannot block start-up. `ok` turns True only when the window confirms it took the link."""
 
-    def send():
+    def __init__(self, msg):
+        super().__init__(daemon=True)
+        self.msg, self.ok = msg, False
+        self.start()
+
+    def run(self):
         try:
             with Client(PIPE, family="AF_PIPE", authkey=TOKEN.read_bytes().strip()) as c:
-                c.send_bytes(msg.encode())
-            done.append(True)
+                c.send_bytes(self.msg.encode())
+                self.ok = c.recv_bytes(16) == b"ok"
         except (OSError, EOFError, AuthenticationError):
             pass
 
-    t = threading.Thread(target=send, daemon=True)
-    t.start()
-    t.join(timeout)
-    return bool(done)
 
-
-def main():
+def main(wait=15):
     url = next((a for a in sys.argv[1:] if a.lower().startswith("nxm://")), None)
-    if hand_over(url or "show"):
-        return
-    for _ in range(20):  # about 10 s: a window that is starting (its token appears) or closing (the pipe frees)
-        try:
-            server = Listener(PIPE, family="AF_PIPE")  # fails while any window of ours (or anyone) holds the name
-            break
-        except OSError:
-            time.sleep(0.5)
-            if hand_over(url or "show"):
-                return
-    else:
-        import ctypes
-        ctypes.windll.user32.MessageBoxW(None, "The mod manager is still running and did not answer. If it is closing, try "
-                                               "again in a moment. If it runs as administrator, close it and start it normally.",
-                                         "CP2077 AI Mod Manager", 0x30)
-        return
+    deadline = time.monotonic() + wait  # a window that is starting (token appears) or closing (pipe frees)
+    attempt = HandOver(url or "show")
+    while True:
+        attempt.join(0.5)
+        if attempt.ok:
+            return
+        if not attempt.is_alive():  # never two attempts at once, so a link is delivered at most once
+            try:
+                server = Listener(PIPE, family="AF_PIPE")  # fails while any window of ours (or anyone) holds the name
+                break
+            except OSError:
+                attempt = HandOver(url or "show")
+        if time.monotonic() > deadline:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, "The mod manager is still running and did not answer. If it is closing, "
+                                                   "try again in a moment. If it runs as administrator, close it and start it "
+                                                   "normally.", "CP2077 AI Mod Manager", 0x30)
+            return
     token = secrets.token_hex(16).encode()  # written only once this process owns the pipe
     TOKEN.parent.mkdir(parents=True, exist_ok=True)
     TOKEN.write_bytes(token)

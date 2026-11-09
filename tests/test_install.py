@@ -75,6 +75,28 @@ class Install(unittest.TestCase):
         self.assertFalse((self.tmp / "a/evil.archive").exists())  # "..\..\evil.archive" from out
         self.assertEqual([p.name for p in self.tmp.rglob("evil.archive")], [])
 
+    def test_archive_name_cannot_inject_tar_options(self):
+        # A full-width quote becomes a real quote in tar's ANSI command line ("best-fit"); "--version" must stay a name.
+        rels = self.run_install({"a.archive": "x"}, archive="mod＂ --version ＂.zip")
+        self.assertEqual(rels, ["archive/pc/mod/a.archive"])
+
+    def test_fomod_folder_with_a_junction_is_skipped(self):
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("private")
+        tree, out = self.tmp / "tree", self.tmp / "out"
+        (tree / "fomod").mkdir(parents=True)
+        (tree / "opts").mkdir()
+        (tree / "opts" / "ok.reds").write_text("x")
+        r = subprocess.run(["cmd", "/c", "mklink", "/J", str(tree / "opts" / "link"), str(outside)], capture_output=True)
+        if r.returncode:
+            self.skipTest("could not create a junction")
+        (tree / "fomod" / "ModuleConfig.xml").write_text(
+            '<config><requiredInstallFiles><folder source="opts" destination="r6/scripts/m" /></requiredInstallFiles></config>')
+        fomod_tree(tree, out)
+        self.assertFalse((out / "r6").exists())  # the whole pick is skipped, so nothing goes through the link
+        self.assertEqual(list(out.rglob("secret.txt")), [])
+
     def test_inside_refuses_every_way_out(self):
         for bad in ("..\\..\\evil.archive", "../x", "\\Users\\Public\\evil.archive", "/Users/Public/evil.archive",
                     "D:evil.dll", "C:/x", "C:\\x", "\\\\server\\share\\x", "a/../../x"):

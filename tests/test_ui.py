@@ -122,6 +122,7 @@ class Window(unittest.TestCase):
             self.assertNotIn("show", events())
             with Client(pipe, family="AF_PIPE", authkey=b"t0k3n") as c:
                 c.send_bytes(b"nxm://cyberpunk2077/mods/1/files/2?key=a&expires=1")
+                self.assertEqual(c.recv_bytes(), b"ok")  # the window confirms it took the link
             self.assertIn("show", events())
             app.ctl.stop.set()  # closing: even the right token is refused, so the sender keeps its link
             with self.assertRaises((AuthenticationError, OSError, EOFError)):

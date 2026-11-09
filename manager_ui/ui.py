@@ -69,6 +69,8 @@ class App:
             self.store.settings["game_dir"] = find_game() or self.store.settings["game_dir"]
             self.store.save()
         self.ctl = Controller(self.store, lambda kind, payload=None: self.events.put((kind, payload)))
+        if server:  # take links at once, before the window is built
+            threading.Thread(target=self._serve, args=(server,), daemon=True).start()
         self.problems, self.was_busy, self.banner_hidden = [], False, False
         self.k = root.winfo_fpixels("1i") / 96  # pixel sizes below are for 100% display scaling
         root.title(f"Cyberpunk 2077 AI Mod Manager {VERSION}")
@@ -94,8 +96,6 @@ class App:
         self.refresh_setup()
         self.refresh_history()
         self.tick = root.after(150, self._drain)
-        if server:
-            threading.Thread(target=self._serve, args=(server,), daemon=True).start()
         if first_url:
             self.ctl.bg(self.ctl.handle_nxm, first_url)  # a bad link (e.g. another game) becomes a message, not a crash
         if not self.store.game():
@@ -827,6 +827,9 @@ class App:
                 deliver_challenge(conn, self.token)
                 answer_challenge(conn, self.token)
                 msg = conn.recv_bytes(4096).decode("utf-8", "replace").strip()
+                if self.ctl.stop.is_set():
+                    return  # closing began meanwhile: no "ok", so the sender keeps the link
+                conn.send_bytes(b"ok")  # the sender counts the link as delivered only after this
             except (AuthenticationError, OSError, EOFError):
                 return
         if msg.lower().startswith("nxm://"):

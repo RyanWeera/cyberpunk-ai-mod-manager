@@ -1,6 +1,29 @@
+import tempfile
 import unittest
+from pathlib import Path
 
+from downloads.fetch import ascii_name, local_copy
 from downloads.nexus import files_page, newer_file, parse_link, pick_file
+
+
+class FileNames(unittest.TestCase):
+    def test_names_are_plain_ascii(self):
+        self.assertEqual(ascii_name("mod＂ --version ＂.zip"), "mod_ --version _.zip")
+        self.assertTrue(ascii_name("Ärger Mod v1.2 (fix).7z").isascii())
+        self.assertEqual(ascii_name("..\\..\\x.zip"), "_.._x.zip")
+        self.assertEqual(ascii_name("..."), "download.zip")
+
+    def test_local_copy_keeps_the_original(self):
+        tmp = Path(tempfile.mkdtemp())
+        src = tmp / "Mod ＂x＂.zip"
+        src.write_bytes(b"zip")
+        dl = tmp / "dl"
+        dl.mkdir()
+        c = local_copy(src, dl)
+        self.assertTrue(c.name.isascii())
+        self.assertEqual(c.read_bytes(), b"zip")
+        c.unlink()
+        self.assertTrue(src.exists())
 
 
 class Links(unittest.TestCase):
