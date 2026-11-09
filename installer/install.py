@@ -19,22 +19,16 @@ CET_MODS = "bin/x64/plugins/cyber_engine_tweaks/mods"
 def extract(archive, dest):
     """Unpack `archive` into the new folder `dest` with tar.exe.
     tar reads its command line in the ANSI code page, where "best-fit" turns some Unicode letters (a full-width
-    quote, for one) into real quotes and splits the arguments. So tar only ever sees fixed ASCII names: the
-    archive is linked (or copied) next to `dest` as "archive", and tar runs in that folder. This also keeps
-    user names with non-English letters in the temp path away from tar."""
+    quote, for one) into real quotes and splits the arguments. So no name reaches tar's command line: it reads
+    the archive from standard input and unpacks into the fixed name of `dest`, with its parent as working folder
+    (Windows passes that folder separately, so user names with non-English letters are safe too)."""
     archive, dest = Path(archive), Path(dest)
-    local = dest.parent / "archive"
     try:
-        os.link(archive, local)
-    except OSError:
-        shutil.copyfile(archive, local)
-    try:
-        r = subprocess.run([str(TAR), "-xf", local.name, "-C", dest.name], cwd=dest.parent, capture_output=True,
-                           text=True, errors="replace", creationflags=NO_WINDOW, timeout=1800)
+        with open(archive, "rb") as f:
+            r = subprocess.run([str(TAR), "-xf", "-", "-C", dest.name], stdin=f, cwd=dest.parent, capture_output=True,
+                               text=True, errors="replace", creationflags=NO_WINDOW, timeout=1800)
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"Unpacking {archive.name} took more than 30 minutes") from None
-    finally:
-        local.unlink(missing_ok=True)
     if r.returncode:
         old_windows = sys.getwindowsversion().build < 22000 if hasattr(sys, "getwindowsversion") else False
         hint = (" The tar.exe in Windows 10 cannot open some .7z and .rar files: update to Windows 11, or unpack it "

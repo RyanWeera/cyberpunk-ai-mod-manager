@@ -2,8 +2,10 @@
 plus game launch, crash handling, fixes and undo. Worker threads report through notify(kind, payload)."""
 import itertools
 import queue
+import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import webbrowser
@@ -11,7 +13,7 @@ from pathlib import Path
 
 from crash_doctor import doctor, watch
 from downloads import nexus
-from downloads.fetch import FRAMEWORKS, FW_BY_NEXUS, FW_BY_REPO, download, github_latest, local_copy
+from downloads.fetch import FRAMEWORKS, FW_BY_NEXUS, FW_BY_REPO, download, github_latest
 from installer import deploy, install
 from shared.store import GAME_EXE
 from virus_scan import scan
@@ -138,10 +140,11 @@ class Controller:
         self._job(fw, {"type": "github", "repo": FRAMEWORKS[fw][0]}, framework=fw)
 
     def handle_nxm(self, url):
-        """An nxm:// link from the browser (the user clicked a download on Nexus)."""
+        """An nxm:// link from the browser. A link that a waiting download asked for continues that download.
+        Any other link may come from any web page, so the user is asked before anything is installed."""
         link = nexus.parse_link(url)
         if link["type"] != "nexus":
-            return self.add_links(url)
+            return self.notify("confirm", {"url": url, "text": "Download and install this Nexus collection?"})
         with self.lock:
             j = next((j for j in self.jobs if j["state"] == "waiting" and j["src"]["mod_id"] == link["mod_id"]
                       and j["src"]["file_id"] == link["file_id"]), None)
@@ -152,8 +155,13 @@ class Controller:
             self._set(j, "Queued")
             self.work.put(j)
             self._next_click()
-        else:
-            self.add_links(url)
+            return
+        name = f"Nexus mod {link['mod_id']}"
+        try:
+            name = nexus.mod_info(link["mod_id"], self.key)["name"]
+        except Exception:  # noqa: BLE001 - offline or unknown: ask with the number instead
+            pass
+        self.notify("confirm", {"url": url, "text": f"Download and install '{name}' (file {link['file_id']}) from Nexus?"})
 
     def _next_click(self):
         """Free accounts: open the Nexus page of the next waiting file, one at a time."""
@@ -206,7 +214,7 @@ class Controller:
             self.work.task_done()
 
     def _run(self, j):
-        s, dl = j["src"], self.store.downloads
+        s = j["src"]
 
         def prog(done, total):
             self._set(j, "Downloading", f"{done * 100 // total}%" if total else f"{done >> 20} MB")
@@ -218,27 +226,36 @@ class Controller:
             if not (self.premium or s.get("key")):
                 j["state"] = "waiting"
                 return self._set(j, "Waiting for your click on Nexus")
-            self._set(j, "Getting download link")
-            path = download(nexus.download_url(self.key, s["mod_id"], s["file_id"], s.get("key"), s.get("expires")), dl, prog)
-        elif s["type"] == "github":
-            rel = github_latest(s["repo"])
-            j["version"] = rel["tag"]
-            path = download(rel["url"], dl, prog)
-        elif s["type"] == "url":
-            path = download(s["url"], dl, prog)
-        else:
-            path = local_copy(s["path"], dl)  # a plain ASCII name for Defender and tar; the user's file stays as it is
-        if self.store.settings["virus_scan"]:
-            self._set(j, "Scanning for viruses")
-            clean, detail = scan.scan(path)
-            if clean is False:
-                path.unlink(missing_ok=True)  # always our own copy in the downloads folder
-                j["state"] = "failed"
-                return self._set(j, f"Blocked: virus found ({detail})")
-            if clean is None:
-                self.notify("log", f"{j['name']}: virus scan skipped ({detail})")
-        self._set(j, "Installing")
-        self.install_job(j, path)
+        # One new folder per job: no two jobs share a file, and nothing here is ever the user's own file.
+        work = Path(tempfile.mkdtemp(prefix="job-", dir=self.store.downloads))
+        try:
+            if s["type"] == "nexus":
+                self._set(j, "Getting download link")
+                path = download(nexus.download_url(self.key, s["mod_id"], s["file_id"], s.get("key"), s.get("expires")),
+                                work, prog)
+            elif s["type"] == "github":
+                rel = github_latest(s["repo"])
+                j["version"] = rel["tag"]
+                path = download(rel["url"], work, prog)
+            elif s["type"] == "url":
+                path = download(s["url"], work, prog)
+            else:  # a file from the PC: copied under a fixed plain name (for Defender's command line); the original stays
+                self._set(j, "Copying")
+                suffix = Path(s["path"]).suffix.lower()
+                path = work / ("archive" + (suffix if re.fullmatch(r"\.[a-z0-9]{1,5}", suffix) else ""))
+                shutil.copyfile(s["path"], path)
+            if self.store.settings["virus_scan"]:
+                self._set(j, "Scanning for viruses")
+                clean, detail = scan.scan(path)
+                if clean is False:
+                    j["state"] = "failed"
+                    return self._set(j, f"Blocked: virus found ({detail})")
+                if clean is None:
+                    self.notify("log", f"{j['name']}: virus scan skipped ({detail})")
+            self._set(j, "Installing")
+            self.install_job(j, path)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
         j["state"] = "done"
         self._set(j, "Done")
 

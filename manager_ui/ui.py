@@ -63,6 +63,7 @@ class Tip:
 class App:
     def __init__(self, root, server=None, first_url=None, register=None, registered=None, store=None, token=b""):
         self.root, self.events, self.token = root, queue.Queue(), token
+        self.handshakes, self.handshake_timeout = threading.BoundedSemaphore(4), 5.0
         self.register, self.registered = register, registered or (lambda: False)
         self.store = store or Store()
         if not self.store.game():
@@ -802,6 +803,13 @@ class App:
                 elif kind == "show":
                     self.root.deiconify()
                     self.root.lift()
+                elif kind == "confirm":  # a Nexus link this app did not ask for: it may come from any web page
+                    self.root.deiconify()
+                    self.root.lift()
+                    if messagebox.askyesno("Nexus download", p["text"] + "\n\nSay yes only if you clicked this download "
+                                                                        "yourself on Nexus Mods."):
+                        self.ctl.add_links(p["url"])
+                        self.tabs.select(self.tab["Downloads"])
         except queue.Empty:
             pass
         self.tick = self.root.after(150, self._drain)
@@ -819,19 +827,29 @@ class App:
             threading.Thread(target=self._take, args=(conn,), daemon=True).start()  # a stalled client blocks only itself
 
     def _take(self, conn):
-        """Both sides prove they know the token; only then is the nxm link (or "show") read."""
-        with conn:
-            if self.ctl.stop.is_set():
-                return  # closing: refuse, so the sender keeps its link and opens the next window when this one is gone
-            try:
+        """Both sides prove they know the token; only then is the nxm link (or "show") read.
+        At most 4 connections are checked at once, and each gets `handshake_timeout` seconds, so callers that
+        stall (other accounts can open the pipe for reading) cannot use up the app's threads."""
+        if not self.handshakes.acquire(blocking=False):
+            conn.close()
+            return
+        cut = threading.Timer(self.handshake_timeout, conn.close)
+        cut.start()
+        try:
+            with conn:
+                if self.ctl.stop.is_set():
+                    return  # closing: refuse, so the sender keeps its link and opens the next window when this one is gone
                 deliver_challenge(conn, self.token)
                 answer_challenge(conn, self.token)
                 msg = conn.recv_bytes(4096).decode("utf-8", "replace").strip()
                 if self.ctl.stop.is_set():
                     return  # closing began meanwhile: no "ok", so the sender keeps the link
                 conn.send_bytes(b"ok")  # the sender counts the link as delivered only after this
-            except (AuthenticationError, OSError, EOFError):
-                return
+        except (AuthenticationError, OSError, EOFError, TypeError):  # TypeError: the connection was cut mid-read
+            return
+        finally:
+            cut.cancel()
+            self.handshakes.release()
         if msg.lower().startswith("nxm://"):
             self.ctl.bg(self.ctl.handle_nxm, msg)
         if msg.lower().startswith("nxm://") or msg == "show":

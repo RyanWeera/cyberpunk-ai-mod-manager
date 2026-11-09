@@ -69,23 +69,29 @@ class HandOver(threading.Thread):
 def main(wait=15):
     url = next((a for a in sys.argv[1:] if a.lower().startswith("nxm://")), None)
     deadline = time.monotonic() + wait  # a window that is starting (token appears) or closing (pipe frees)
-    attempt = HandOver(url or "show")
+    attempt, started = HandOver(url or "show"), time.monotonic()
     while True:
         attempt.join(0.5)
-        if attempt.ok:
-            return
-        if not attempt.is_alive():  # never two attempts at once, so a link is delivered at most once
+        if not attempt.is_alive():  # only one attempt at a time, so a link is delivered at most once
+            if attempt.ok:
+                return
             try:
                 server = Listener(PIPE, family="AF_PIPE")  # fails while any window of ours (or anyone) holds the name
                 break
             except OSError:
-                attempt = HandOver(url or "show")
+                pass
         if time.monotonic() > deadline:
+            attempt.join(1)  # one last chance for an answer that is on its way
+            if attempt.ok:
+                return
             import ctypes
             ctypes.windll.user32.MessageBoxW(None, "The mod manager is still running and did not answer. If it is closing, "
                                                    "try again in a moment. If it runs as administrator, close it and start it "
                                                    "normally.", "CP2077 AI Mod Manager", 0x30)
             return
+        if not attempt.is_alive():
+            time.sleep(max(0.0, started + 0.5 - time.monotonic()))  # at most 2 tries a second, never a busy loop
+            attempt, started = HandOver(url or "show"), time.monotonic()
     token = secrets.token_hex(16).encode()  # written only once this process owns the pipe
     TOKEN.parent.mkdir(parents=True, exist_ok=True)
     TOKEN.write_bytes(token)

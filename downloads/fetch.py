@@ -2,7 +2,6 @@
 import json
 import os
 import re
-import shutil
 import time
 import urllib.parse
 import urllib.request
@@ -45,17 +44,6 @@ def ascii_name(name):
     """A plain ASCII file name. Windows tools that read their command line in the ANSI code page turn some
     Unicode letters into quotes ("best-fit"), so a server-chosen name must never reach them as it is."""
     return re.sub(r"[^A-Za-z0-9._ ()+-]", "_", name).strip(". ") or "download.zip"
-
-
-def local_copy(path, folder):
-    """Put a file the user picked under a plain ASCII name in `folder` (a link when possible, else a copy)."""
-    dest = Path(folder) / ascii_name(Path(path).name)
-    dest.unlink(missing_ok=True)
-    try:
-        os.link(path, dest)
-    except OSError:
-        shutil.copy2(path, dest)
-    return dest
 
 
 def download(url, folder, progress=None, headers=None):

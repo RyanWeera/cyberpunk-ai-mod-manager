@@ -1,3 +1,5 @@
+import os
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -79,6 +81,13 @@ class Install(unittest.TestCase):
         # A full-width quote becomes a real quote in tar's ANSI command line ("best-fit"); "--version" must stay a name.
         rels = self.run_install({"a.archive": "x"}, archive="mod＂ --version ＂.zip")
         self.assertEqual(rels, ["archive/pc/mod/a.archive"])
+
+    def test_read_only_archive_installs_and_stays_unchanged(self):
+        z = make_zip(self.tmp / "ro.zip", {"a.archive": "x"})
+        os.chmod(z, stat.S_IREAD)
+        self.addCleanup(os.chmod, z, stat.S_IWRITE | stat.S_IREAD)
+        self.assertEqual(install(z, self.tmp / "stage", "RO"), ["archive/pc/mod/a.archive"])
+        self.assertFalse(os.access(z, os.W_OK))  # still read-only: nothing touched the user's file
 
     def test_fomod_folder_with_a_junction_is_skipped(self):
         outside = self.tmp / "outside"

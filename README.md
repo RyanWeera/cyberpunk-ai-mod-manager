@@ -51,6 +51,8 @@ Nexus Mods gives a free account a download only after a person clicks **Slow dow
 
 With a Nexus Premium account no clicks are needed. Frameworks, GitHub mods and direct links never need a click.
 
+If you click a "Mod Manager Download" button on Nexus yourself (not on a page the app opened), the app shows the mod's name and asks you before it installs anything. Any web page can send such a link, so this check keeps pages from installing mods without you.
+
 ## Download, check and remove
 
 - **Every version:** the [Releases](../../releases) page.

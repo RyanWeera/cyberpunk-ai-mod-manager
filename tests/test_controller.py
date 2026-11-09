@@ -1,4 +1,6 @@
+import os
 import queue
+import stat
 import tempfile
 import threading
 import time
@@ -49,6 +51,29 @@ class Pipeline(unittest.TestCase):
         self.assertTrue((self.game / "r6/tweaks/My Tweak/a.yaml").exists())
         self.assertTrue((self.game / "red4ext/plugins/TweakXL/TweakXL.dll").exists())
         self.assertEqual(self.store.mods[-1]["name"], "My Tweak")  # frameworks go first, mods last
+
+    def test_files_from_the_pc_stay_untouched_even_read_only_or_in_downloads(self):
+        ro = make_zip(self.tmp / "ro.zip", {"a.archive": "x"})
+        os.chmod(ro, stat.S_IREAD)
+        self.addCleanup(os.chmod, ro, stat.S_IWRITE | stat.S_IREAD)
+        inside = make_zip(self.store.downloads / "b.zip", {"b.archive": "x"})  # picked again from the app's own folder
+        c = self.controller()
+        c.add_links(f"{ro}\n{inside}")
+        wait_idle(c)
+        self.assertEqual([j["status"] for j in c.jobs], ["Done", "Done"])
+        self.assertTrue(ro.exists() and not os.access(ro, os.W_OK))
+        self.assertTrue(inside.exists())
+        self.assertEqual([p.name for p in self.store.downloads.iterdir()], ["b.zip"])  # job folders are cleaned up
+
+    def test_unrequested_nxm_link_asks_first(self):
+        with mock.patch.object(ctl_mod.nexus, "mod_info", lambda mid, key="": {"name": "Shady Mod"}):
+            c = self.controller()
+            c.handle_nxm("nxm://cyberpunk2077/mods/9/files/8?key=a&expires=1")
+            c.handle_nxm("nxm://cyberpunk2077/collections/abcd/revisions/1")
+        self.assertEqual(c.jobs, [])  # nothing queued without the user's yes
+        asked = [p["text"] for k, p in list(self.events.queue) if k == "confirm"]
+        self.assertIn("Shady Mod", asked[0])
+        self.assertIn("collection", asked[1])
 
     def test_free_account_waits_for_click_then_downloads(self):
         self.store.settings["api_key"] = "k"

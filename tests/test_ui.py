@@ -130,6 +130,30 @@ class Window(unittest.TestCase):
                     c.send_bytes(b"nxm://cyberpunk2077/mods/1/files/3?key=a&expires=1")
         nxm.assert_called_once()
 
+    def test_stalled_pipe_callers_are_cut_off(self):
+        pipe = rf"\\.\pipe\cp2077mm-test-{uuid.uuid4().hex}"
+        server = Listener(pipe, family="AF_PIPE")
+        top = tk.Toplevel(self.root)
+        app = ui.App(top, server=server, store=self.store, token=b"t0k3n")
+        app.handshake_timeout = 0.5
+        stalls = [Client(pipe, family="AF_PIPE") for _ in range(6)]  # connect, never answer the challenge
+        self.addCleanup(lambda: [s.close() for s in stalls])
+        self.addCleanup(lambda: (app.ctl.stop.set(), top.after_cancel(app.tick), server.close()))
+        time.sleep(1.5)  # every stalled check has been cut off by now
+        with Client(pipe, family="AF_PIPE", authkey=b"t0k3n") as c:
+            c.send_bytes(b"show")
+            self.assertEqual(c.recv_bytes(), b"ok")
+
+    def test_unrequested_link_needs_a_yes(self):
+        app = self.app
+        for answer in (False, True):
+            with mock.patch.object(ui.messagebox, "askyesno", return_value=answer), \
+                    mock.patch.object(app.ctl, "add_links") as add:
+                app.events.put(("confirm", {"url": "nxm://cyberpunk2077/mods/9/files/8", "text": "Install?"}))
+                app.root.after_cancel(app.tick)
+                app._drain()
+            self.assertEqual(add.call_count, int(answer))
+
     def test_pipe_squatter_gets_nothing(self):
         """A program that holds the pipe name but does not know the token learns no link."""
         pipe = rf"\\.\pipe\cp2077mm-test-{uuid.uuid4().hex}"

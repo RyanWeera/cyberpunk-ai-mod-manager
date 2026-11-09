@@ -72,17 +72,20 @@ class StartUp(unittest.TestCase):
 
     def test_link_refused_by_a_closing_window_opens_the_next_window(self):
         closing = Listener(self.pipe, family="AF_PIPE")
+        tries = []
 
         def refuse():  # like ui._take while the window closes: accept, then hang up at once
             while True:
                 try:
                     closing.accept().close()
+                    tries.append(1)
                 except OSError:
                     return
 
         threading.Thread(target=refuse, daemon=True).start()
         threading.Timer(1.0, closing.close).start()  # the closing window is gone after 1 s
         app.main()
+        self.assertLessEqual(len(tries), 4)  # paced retries (about 2 a second), not a busy loop
         self.run_window.assert_called_once()
         server, url = self.run_window.call_args[0][:2]
         self.assertEqual(url, LINK)  # the link was kept
