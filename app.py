@@ -8,6 +8,7 @@ import getpass
 import hashlib
 import secrets
 import sys
+import time
 from multiprocessing import AuthenticationError
 from multiprocessing.connection import Client, Listener
 from pathlib import Path
@@ -46,21 +47,34 @@ def nxm_registered():
         return False
 
 
-def main():
-    url = next((a for a in sys.argv[1:] if a.lower().startswith("nxm://")), None)
+def hand_over(msg):
+    """Give msg to the running window. True when it took it."""
     try:
         with Client(PIPE, family="AF_PIPE", authkey=TOKEN.read_bytes().strip()) as c:
-            c.send_bytes((url or "show").encode())
-        return
+            c.send_bytes(msg.encode())
+        return True
     except (OSError, EOFError, AuthenticationError):
-        pass  # no window of ours is running: become it
-    token = secrets.token_hex(16).encode()
+        return False
+
+
+def main():
+    url = next((a for a in sys.argv[1:] if a.lower().startswith("nxm://")), None)
+    if hand_over(url or "show"):
+        return
+    try:
+        server = Listener(PIPE, family="AF_PIPE")  # fails while any window of ours (or anyone) holds the name
+    except OSError:
+        for _ in range(6):  # a window that is just starting: its token appears in a moment
+            time.sleep(0.5)
+            if hand_over(url or "show"):
+                return
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, "The mod manager is already running, but it did not answer. If it runs as "
+                                               "administrator, close it and start it normally.", "CP2077 AI Mod Manager", 0x30)
+        return
+    token = secrets.token_hex(16).encode()  # written only once this process owns the pipe
     TOKEN.parent.mkdir(parents=True, exist_ok=True)
     TOKEN.write_bytes(token)
-    try:
-        server = Listener(PIPE, family="AF_PIPE")  # fails if anyone already holds this pipe name
-    except OSError:
-        server = None  # run without link hand-over rather than not at all
     from manager_ui.ui import run
     run(server, url, register_nxm, nxm_registered, token)
 

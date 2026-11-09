@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path, PureWindowsPath
@@ -22,8 +23,9 @@ def extract(archive, dest):
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"Unpacking {Path(archive).name} took more than 30 minutes") from None
     if r.returncode:
+        old_windows = sys.getwindowsversion().build < 22000 if hasattr(sys, "getwindowsversion") else False
         hint = (" The tar.exe in Windows 10 cannot open some .7z and .rar files: update to Windows 11, or unpack it "
-                "yourself, zip it, and add the .zip.") if Path(archive).suffix.lower() in (".7z", ".rar") else ""
+                "yourself, zip it, and add the .zip.") if old_windows and Path(archive).suffix.lower() in (".7z", ".rar") else ""
         raise RuntimeError(f"Could not unpack {Path(archive).name}: {r.stderr.strip()[-300:]}{hint}")
 
 

@@ -25,6 +25,7 @@ dist/
 *.pem
 *.key
 *.p12
+*.pfx
 
 # Editors, OS and local tools
 .vscode/

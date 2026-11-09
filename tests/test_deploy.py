@@ -86,6 +86,35 @@ class Deploy(unittest.TestCase):
         deploy(self.store)
         self.assertFalse(f.exists())  # ours, so removed when no archive is left
 
+    def test_users_modlist_comes_back_with_their_own_archives_present(self):
+        f = self.game / "archive/pc/mod/modlist.txt"
+        (self.game / "archive/pc/mod/zz_user.archive").write_text("x")
+        f.write_text("zz_user.archive\n# my notes\n")
+        deploy(self.store)  # no managed mod yet: hands off
+        self.assertEqual(f.read_text(), "zz_user.archive\n# my notes\n")
+        stage(self.store, mod("a", ["archive/pc/mod/a.archive"]))
+        deploy(self.store)
+        self.assertEqual(f.read_text().split(), ["a.archive", "zz_user.archive"])
+        self.store.mod("a")["enabled"] = False
+        deploy(self.store)
+        self.assertEqual(f.read_text(), "zz_user.archive\n# my notes\n")
+        self.assertNotIn("archive/pc/mod/modlist.txt", self.store.deployed)
+
+    def test_upgrade_from_v100_does_not_keep_the_old_generated_modlist(self):
+        stage(self.store, mod("a", ["archive/pc/mod/a.archive"]))
+        deploy(self.store)
+        del self.store.deployed["archive/pc/mod/modlist.txt"]  # v1.0.0 did not record the file
+        (self.store.backups / "archive/pc/mod/modlist.txt").unlink(missing_ok=True)
+        self.store.mod("a")["enabled"] = False
+        deploy(self.store)
+        self.assertFalse((self.game / "archive/pc/mod/modlist.txt").exists())
+
+    def test_mod_shipping_a_modlist_is_ignored(self):
+        stage(self.store, mod("a", ["archive/pc/mod/a.archive", "archive/pc/mod/modlist.txt"]))
+        deploy(self.store)
+        self.assertEqual(deploy(self.store), 0)  # stable: no change reported forever
+        self.assertEqual((self.game / "archive/pc/mod/modlist.txt").read_text().split(), ["a.archive"])
+
     def test_unmanaged_archives_kept_last(self):
         (self.game / "archive/pc/mod/zzz_manual.archive").write_text("x")
         stage(self.store, mod("a", ["archive/pc/mod/a.archive"]))

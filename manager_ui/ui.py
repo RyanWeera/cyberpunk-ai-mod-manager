@@ -215,6 +215,7 @@ class App:
         self.mods.bind("<space>", lambda e: self.toggle())
         self.mods.bind("<Delete>", lambda e: self.remove())
         self.mods.bind("<Control-a>", self.select_all)
+        self.mods.bind("<Control-A>", self.select_all)  # Caps Lock on
         self.mods.bind("<Button-1>", self._mods_click, add="+")
         self.mods.bind("<Button-3>", self._mods_menu)
         self.menu = tk.Menu(self.root, tearoff=0, bg=PANEL2, fg=FG, activebackground=ACCENT, activeforeground="#000", bd=0)
@@ -382,12 +383,19 @@ class App:
         return "break"
 
     def close(self):
-        """Wait for a copy into the game folder that is running now; then no new one starts."""
+        """No new copy starts; the window stays responsive while a running copy finishes, then closes."""
+        if self.ctl.stop.is_set():
+            return
+        self.ctl.stop.set()
         self.say("Finishing the current copy into the game folder…")
-        self.root.update_idletasks()
-        with self.store.lock:
-            self.ctl.stop.set()
-        self.root.destroy()
+        self._close_when_free()
+
+    def _close_when_free(self):
+        if self.store.lock.acquire(blocking=False):
+            # Keep the lock until the process ends: no thread may start a copy or swap mod files now.
+            self.root.destroy()
+        else:
+            self.root.after(200, self._close_when_free)
 
     def redeploy(self):
         if self.store.game():
@@ -800,6 +808,9 @@ class App:
                 conn = server.accept()
             except OSError:
                 return  # the pipe was closed
+            except Exception:  # noqa: BLE001 - one bad connection must not end the hand-over
+                time.sleep(0.2)
+                continue
             threading.Thread(target=self._take, args=(conn,), daemon=True).start()  # a stalled client blocks only itself
 
     def _take(self, conn):

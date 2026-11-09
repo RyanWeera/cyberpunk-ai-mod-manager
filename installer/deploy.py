@@ -17,7 +17,8 @@ def plan(store):
     want = {}
     for m in store.enabled():  # later mods overwrite earlier ones
         for rel in m["files"]:
-            want[rel.lower()] = (m["id"], rel)
+            if rel.lower() != MODLIST:  # the load order file is written by deploy(), never copied from a mod
+                want[rel.lower()] = (m["id"], rel)
     return want
 
 
@@ -50,15 +51,16 @@ def _switch_game(store, game):
 
 
 def load_order(store, game):
-    """Archive file names in load order. The game loads archive/pc/mod in modlist.txt order and the
-    first archive loaded wins, so the highest-priority mod goes first. Unmanaged archives go last."""
+    """(managed, others): archive file names in load order. The game loads archive/pc/mod in modlist.txt
+    order and the first archive loaded wins, so the highest-priority mod goes first. Archives this app
+    does not manage go last."""
     managed = [Path(r).name for m in reversed(store.enabled()) for r in m["files"]
                if r.lower().startswith(ARCHIVES + "/") and r.lower().endswith(".archive") and r.count("/") == 3]
     managed = list(dict.fromkeys(managed))
     d = game / ARCHIVES
     low = {n.lower() for n in managed}
     others = sorted(p.name for p in d.glob("*.archive") if p.name.lower() not in low) if d.is_dir() else []
-    return managed + others
+    return managed, others
 
 
 def deploy(store):
@@ -71,6 +73,8 @@ def deploy(store):
     with store.lock:
         try:
             _switch_game(store, game)
+            # v1.0.0 wrote modlist.txt without recording it: then the file there is ours, not the user's
+            ours_untracked = MODLIST not in store.deployed and any(k.startswith(ARCHIVES + "/") for k in store.deployed)
             want = plan(store)
             gone = [k for k in store.deployed if k not in want and k != MODLIST]
             for key in gone:
@@ -88,16 +92,17 @@ def deploy(store):
                     shutil.copy2(src, dst)
                     changed += 1
                 store.deployed[key] = mid
-            order = load_order(store, game)
-            if order:  # the user's own modlist.txt is backed up once, like any game file we replace
+            managed, others = load_order(store, game)
+            if managed:  # the user's own modlist.txt is backed up once, like any game file we replace
                 f, bak = game / MODLIST, store.backups / MODLIST
-                if MODLIST not in store.deployed and f.exists() and not bak.exists():
+                if MODLIST not in store.deployed and f.exists() and not bak.exists() and not ours_untracked:
                     bak.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(f, bak)
-                f.write_text("\n".join(order) + "\n", "utf-8")
+                f.write_text("\n".join(managed + others) + "\n", "utf-8")
                 store.deployed[MODLIST] = LOAD_ORDER
-            elif MODLIST in store.deployed:  # no managed archive left: put the user's file back, or remove ours
-                _remove(store, game, MODLIST)
+            elif MODLIST in store.deployed or ours_untracked:  # no managed archive is on: give the folder back
+                store.deployed[MODLIST] = LOAD_ORDER
+                _remove(store, game, MODLIST)  # puts the user's file back, or deletes ours
             return changed
         finally:
             store.save()

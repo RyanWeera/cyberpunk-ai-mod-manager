@@ -167,8 +167,14 @@ class Window(unittest.TestCase):
         time.sleep(0.1)
         top.after_cancel(app.tick)
         app.close()
-        self.assertTrue(released and time.perf_counter() >= released[0])  # close returned only after the copy
         self.assertTrue(app.ctl.stop.is_set())
+        self.assertTrue(top.winfo_exists())  # still open (and responsive) while the copy runs
+        end = time.time() + 5
+        while top.winfo_exists() and time.time() < end:
+            self.root.update()
+            time.sleep(0.02)
+        self.assertFalse(top.winfo_exists())
+        self.assertTrue(released)  # it closed only after the copy finished
         self.store.settings["game_dir"] = str(fake_game(self.tmp))
         app.ctl.redeploy(sync=True)  # after close: no new copy starts
         self.assertEqual(self.store.deployed, {})

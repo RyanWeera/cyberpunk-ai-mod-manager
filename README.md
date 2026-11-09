@@ -55,12 +55,12 @@ With a Nexus Premium account no clicks are needed. Frameworks, GitHub mods and d
 
 - **Every version:** the [Releases](../../releases) page.
 - **Check the file (optional):** each release lists the file's SHA-256. In PowerShell, run `Get-FileHash .\CP2077.AI.Mod.Manager.exe` and compare.
-- **Update:** download the newest exe and replace the old one. Your mods and settings stay. If the new exe is in a different folder or has a different name, click **Use this app for Nexus downloads** again. The version is shown in the title bar.
+- **Update:** close the app, download the newest exe and replace the old one. Your mods and settings stay. If the new exe is in a different folder or has a different name, click **Use this app for Nexus downloads** again. The version is shown in the title bar.
 - **Remove:**
-  1. In the **Mods** list press **Ctrl+A**, then click **Turn on / off** until every row shows ○. This takes the mods' files out of the game folder and puts back the game files they replaced.
+  1. In the **Mods** tab, clear the **Search** box, click any mod, press **Ctrl+A**, then click **Turn on / off** until every row shows ○. This takes the mods' files out of the game folder and puts back the game files (and your own `modlist.txt`) that they replaced.
   2. Wait until the status bar says the mods are set up in the game folder, then close the app.
   3. Delete the exe and the `%LOCALAPPDATA%\CP2077ModManager` folder.
-  4. If you use another mod manager (Vortex, Mod Organizer 2), set it up for Nexus downloads again, so the Nexus download buttons open it.
+  4. Nexus download buttons still point to the deleted app. If you use another mod manager (Vortex, Mod Organizer 2), set it up for Nexus downloads again. If not, run `reg delete HKCU\Software\Classes\nxm /f` in a Command Prompt.
 
 Requirements: Windows 11, or Windows 10 (the app uses the built-in `tar.exe` and Microsoft Defender). The `tar.exe` in Windows 10 is older and cannot unpack some `.7z` and `.rar` mods; the app then says so.
 
