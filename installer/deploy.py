@@ -73,8 +73,10 @@ def deploy(store):
     with store.lock:
         try:
             _switch_game(store, game)
-            # v1.0.0 wrote modlist.txt without recording it: then the file there is ours, not the user's
-            ours_untracked = MODLIST not in store.deployed and any(k.startswith(ARCHIVES + "/") for k in store.deployed)
+            # A v1.0.0 state file: v1.0.0 wrote modlist.txt whenever one of its archives was on, without
+            # recording it, so that file is ours, not the user's. Checked once, on the first v1.0.1 deploy.
+            ours_untracked = not store.modlist_tracked and MODLIST not in store.deployed and any(
+                k.startswith(ARCHIVES + "/") and k.endswith(".archive") and k.count("/") == 3 for k in store.deployed)
             want = plan(store)
             gone = [k for k in store.deployed if k not in want and k != MODLIST]
             for key in gone:
@@ -103,6 +105,7 @@ def deploy(store):
             elif MODLIST in store.deployed or ours_untracked:  # no managed archive is on: give the folder back
                 store.deployed[MODLIST] = LOAD_ORDER
                 _remove(store, game, MODLIST)  # puts the user's file back, or deletes ours
+            store.modlist_tracked = True
             return changed
         finally:
             store.save()

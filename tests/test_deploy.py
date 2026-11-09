@@ -104,10 +104,49 @@ class Deploy(unittest.TestCase):
         stage(self.store, mod("a", ["archive/pc/mod/a.archive"]))
         deploy(self.store)
         del self.store.deployed["archive/pc/mod/modlist.txt"]  # v1.0.0 did not record the file
+        self.store.modlist_tracked = False  # what a v1.0.0 state file loads as
         (self.store.backups / "archive/pc/mod/modlist.txt").unlink(missing_ok=True)
         self.store.mod("a")["enabled"] = False
         deploy(self.store)
         self.assertFalse((self.game / "archive/pc/mod/modlist.txt").exists())
+        self.assertTrue(Store(self.store.root).modlist_tracked)  # checked once only
+
+    def user_modlist(self):
+        f = self.game / "archive/pc/mod/modlist.txt"
+        (self.game / "archive/pc/mod/zz_user.archive").write_text("x")
+        f.write_text("zz_user.archive\n# mine\n")
+        return f
+
+    def test_s1_xl_only_mod_never_touches_the_users_modlist(self):
+        f = self.user_modlist()
+        stage(self.store, mod("b", ["archive/pc/mod/b.archive.xl"]))
+        deploy(self.store)
+        deploy(self.store)
+        self.assertEqual(f.read_text(), "zz_user.archive\n# mine\n")
+
+    def test_s2_users_modlist_survives_after_archive_mod_goes_off(self):
+        f = self.user_modlist()
+        stage(self.store, mod("a", ["archive/pc/mod/a.archive"]))
+        stage(self.store, mod("b", ["archive/pc/mod/b.archive.xl"]))
+        deploy(self.store)
+        self.store.mod("a")["enabled"] = False
+        deploy(self.store)
+        deploy(self.store)
+        self.assertEqual(f.read_text(), "zz_user.archive\n# mine\n")
+
+    def test_s3_users_modlist_survives_a_failed_first_deploy(self):
+        f = self.user_modlist()
+        stage(self.store, mod("a", ["archive/pc/mod/a.archive", "archive/pc/mod/b.archive"]))
+        b = self.store.staging / "a/archive/pc/mod/b.archive"
+        b.unlink()
+        with self.assertRaises(OSError):
+            deploy(self.store)
+        self.assertEqual(f.read_text(), "zz_user.archive\n# mine\n")
+        b.write_text("b")
+        deploy(self.store)
+        self.store.mod("a")["enabled"] = False
+        deploy(self.store)
+        self.assertEqual(f.read_text(), "zz_user.archive\n# mine\n")
 
     def test_mod_shipping_a_modlist_is_ignored(self):
         stage(self.store, mod("a", ["archive/pc/mod/a.archive", "archive/pc/mod/modlist.txt"]))

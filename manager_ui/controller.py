@@ -354,7 +354,10 @@ class Controller:
         game = self.store.game()
         if not game:
             raise RuntimeError("Set the Cyberpunk 2077 folder in Settings first.")
-        deploy.deploy(self.store)
+        with self.store.lock:
+            if self.stop.is_set():  # the window is closing
+                return
+            deploy.deploy(self.store)
         redmod = any(r.lower().startswith("mods/") for m in self.store.enabled() for r in m["files"])
         subprocess.Popen([str(game / GAME_EXE)] + (["-modded"] if redmod else []), cwd=str(game / "bin/x64"))
 

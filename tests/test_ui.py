@@ -175,8 +175,14 @@ class Window(unittest.TestCase):
             time.sleep(0.02)
         self.assertFalse(top.winfo_exists())
         self.assertTrue(released)  # it closed only after the copy finished
+        other = []
+        t = threading.Thread(target=lambda: other.append(self.store.lock.acquire(blocking=False)))
+        t.start()
+        t.join()
+        self.assertEqual(other, [False])  # the window keeps the lock: no other thread can copy now
         self.store.settings["game_dir"] = str(fake_game(self.tmp))
-        app.ctl.redeploy(sync=True)  # after close: no new copy starts
+        app.ctl.redeploy(sync=True)  # after close: no new copy starts, not even here
+        app.ctl.launch()
         self.assertEqual(self.store.deployed, {})
 
     def test_problem_picker_applies_chosen_fix(self):

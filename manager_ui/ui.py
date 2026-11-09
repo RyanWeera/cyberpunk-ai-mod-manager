@@ -388,6 +388,10 @@ class App:
             return
         self.ctl.stop.set()
         self.say("Finishing the current copy into the game folder…")
+        try:
+            self.root.attributes("-disabled", True)  # no clicks while closing (the window still repaints)
+        except tk.TclError:
+            pass
         self._close_when_free()
 
     def _close_when_free(self):
@@ -816,6 +820,8 @@ class App:
     def _take(self, conn):
         """Both sides prove they know the token; only then is the nxm link (or "show") read."""
         with conn:
+            if self.ctl.stop.is_set():
+                return  # closing: refuse, so the sender keeps its link and starts the next window
             try:
                 deliver_challenge(conn, self.token)
                 answer_challenge(conn, self.token)

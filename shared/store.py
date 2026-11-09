@@ -26,13 +26,15 @@ class Store:
         self.mods = d.get("mods", [])
         self.deployed = d.get("deployed", {})  # lowercase game-relative path -> mod id (None: copy again)
         self.deploy_game = d.get("deploy_game", "")  # the game folder `deployed` describes
+        # False only for a state file written by v1.0.0, until its first v1.0.1 deploy finishes
+        self.modlist_tracked = d.get("modlist_tracked", not self.file.exists())
         self.doctor = d.get("doctor", {})      # last_launch, last_good, bisect, history, ignored
 
     def save(self):
         with self.lock:
             tmp = self.file.with_suffix(".tmp")
             body = {"settings": self.settings, "mods": self.mods, "deployed": self.deployed, "deploy_game": self.deploy_game,
-                    "doctor": self.doctor}
+                    "modlist_tracked": self.modlist_tracked, "doctor": self.doctor}
             tmp.write_text(json.dumps(body, indent=1), "utf-8")
             os.replace(tmp, self.file)
 
