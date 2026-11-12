@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 from manager_ui import ui
-from shared.store import Store
+from shared.store import VERSION, Store
 from tests.helpers import fake_game, mod, stage
 
 
@@ -263,7 +263,7 @@ class Window(unittest.TestCase):
         app.refresh_mods()
         app.select_all()
         self.assertEqual(set(app.mods.selection()), {"a", "b"})
-        self.assertIn("1.0.2", top.title())
+        self.assertIn(VERSION, top.title())
         released = []
 
         def busy_copy():
