@@ -1,4 +1,5 @@
 """Start-up hand-over in app.main, on a private test pipe; the window itself is replaced by a stub."""
+import ctypes
 import json
 import sys
 import tempfile
@@ -6,7 +7,7 @@ import threading
 import time
 import unittest
 import uuid
-from multiprocessing.connection import Listener
+from multiprocessing.connection import Client, Listener
 from pathlib import Path
 from unittest import mock
 
@@ -70,6 +71,31 @@ class StartUp(unittest.TestCase):
                 app.ask_window("status", {}, wait=1.2)
         popen.assert_called_once()  # tried again until the deadline, but started only one copy
         self.assertEqual(popen.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"], "1")
+
+    def test_ai_tool_call_starts_no_copy_while_a_window_runs(self):
+        for err in (OSError(0, "All pipe instances are busy", None, 231), app.AuthenticationError("digest was wrong")):
+            with mock.patch.object(app, "Client", side_effect=err), mock.patch.object(app.subprocess, "Popen") as popen:
+                with self.assertRaisesRegex(RuntimeError, "did not answer"):
+                    app.ask_window("status", {}, wait=0.6)
+            popen.assert_not_called()  # a second copy would only show "still running"
+
+    def test_window_pipe_is_open_to_this_account_only(self):
+        server = app.OwnerListener(self.pipe)
+        self.addCleanup(server.close)
+        adv, sd, sddl = ctypes.WinDLL("advapi32"), ctypes.c_void_p(), ctypes.c_wchar_p()
+        adv.GetSecurityInfo.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_uint32] + [ctypes.c_void_p] * 5
+        dacl = 4  # DACL_SECURITY_INFORMATION; 6 below is SE_KERNEL_OBJECT
+        self.assertEqual(adv.GetSecurityInfo(server._listener._handle_queue[0], 6, dacl, None, None, None, None,
+                                             ctypes.byref(sd)), 0)
+        self.assertTrue(adv.ConvertSecurityDescriptorToStringSecurityDescriptorW(sd, 1, dacl, ctypes.byref(sddl), None))
+        self.assertEqual(sddl.value, "D:P(A;;FA;;;OW)")  # the owner only: no Everyone (WD) or Anonymous (AN) read
+        got = []
+        t = threading.Thread(target=lambda: got.append(server.accept().recv_bytes()), daemon=True)
+        t.start()
+        with Client(self.pipe, family="AF_PIPE") as c:  # this account still gets in
+            c.send_bytes(b"show")
+        t.join(5)
+        self.assertEqual(got, [b"show"])
 
     def test_running_window_takes_the_link(self):
         got = []

@@ -3,8 +3,10 @@ else a Nexus name search with the title, the chapter titles or the caption. YouT
 (full description with links and chapters); TikTok and Instagram give the caption; other sites give the
 page title and summary. The video itself is never watched."""
 import html
+import ipaddress
 import json
 import re
+import socket
 import urllib.parse
 import urllib.request
 
@@ -20,11 +22,33 @@ most pc 4k 8k rtx gameplay game now just it its makes make look looks like must 
 fyp foryou foryoupage shorts short video intro outro part ultra""".split())
 
 
+def public(url):
+    """Refuse a link to this PC or the local network (a router page, another app's local server): the link comes
+    from the user, an AI app or a redirect, and only a public web page belongs here."""
+    u = urllib.parse.urlparse(url)
+    if u.scheme not in ("http", "https") or not u.hostname:
+        raise ValueError("Paste an http:// or https:// link")
+    for *_, (addr, *_) in socket.getaddrinfo(u.hostname, None):
+        ip = ipaddress.ip_address(addr)
+        if not (getattr(ip, "ipv4_mapped", None) or ip).is_global:
+            raise ValueError(f"{u.hostname} is on this PC or your local network: paste a link to a public video page")
+
+
+class _PublicRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        public(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+OPENER = urllib.request.build_opener(_PublicRedirects)
+
+
 def page(url, limit=8_000_000):
     """The page at url as text, and the address it ended at after redirects."""
-    if urllib.parse.urlparse(url).scheme not in ("http", "https"):
-        raise ValueError("Paste an http:// or https:// link")
-    with urllib.request.urlopen(urllib.request.Request(url, headers=HEADERS), timeout=30) as r:
+    # ponytail: the name is looked up again to connect, so a DNS server that answers differently the second time
+    # (rebinding) gets through; connect to the checked address if that ever matters
+    public(url)
+    with OPENER.open(urllib.request.Request(url, headers=HEADERS), timeout=30) as r:
         return r.read(limit).decode("utf-8", "replace"), r.url
 
 
@@ -80,9 +104,11 @@ def video_text(url):
     m = re.search(r"/(?:p|reels?|tv)/([\w-]+)", urllib.parse.urlparse(url).path)
     if host.endswith("instagram.com") and m:
         text = page(f"https://www.instagram.com/p/{m[1]}/embed/captioned/")[0]
-        c = re.search(r'<div class="Caption"[^>]*>(.*?)<div class="CaptionComments"', text, re.S)
-        cap = re.sub(r'<a class="CaptionUsername".*?</a>', "", c[1], flags=re.S) if c else ""
-        return "", html.unescape(re.sub(r"<br\s*/?>", "\n", re.sub(r"<(?!br)[^>]+>", "", cap))).strip()
+        i = text.find('<div class="Caption"')  # str.find, not a pattern: the page can be 8 MB
+        j = text.find('<div class="CaptionComments"', i)
+        cap = text[text.find(">", i) + 1:j][:20_000] if 0 <= i < j else ""  # a caption has at most 2,200 letters
+        cap = re.sub(r'<a class="CaptionUsername".*?</a>', "", cap, flags=re.S)
+        return "", html.unescape(re.sub(r"<br\s*/?>", "\n", re.sub(r"<(?!br)[^<>]*>", "", cap))).strip()
     text = page(url)[0]
     meta = _meta(text)
     t = re.search(r"<title[^<>]*>([^<]*)</title>", text, re.I)

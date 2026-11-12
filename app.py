@@ -2,9 +2,12 @@
 AI apps start it as: app.py --mcp)
 
 Only one window runs. A second start (for example from a Nexus "Mod Manager Download" click)
-hands its nxm:// link to the running window over a per-user named pipe and exits. Both sides
-prove they know a random token that the running window writes to the user's own data folder,
-so other users cannot send links to it or pose as it."""
+hands its nxm:// link to the running window over a per-user named pipe and exits. Only the
+account that owns the pipe can open it, and both sides prove they know a random token that the
+running window writes to the user's own data folder, so other users cannot send links to it or
+pose as it."""
+import _winapi
+import ctypes
 import getpass
 import hashlib
 import json
@@ -14,8 +17,9 @@ import subprocess
 import sys
 import threading
 import time
+from ctypes import wintypes
 from multiprocessing import AuthenticationError
-from multiprocessing.connection import Client, Listener
+from multiprocessing.connection import BUFSIZE, Client, Listener, PipeListener
 from pathlib import Path
 
 from shared.store import DATA
@@ -52,6 +56,39 @@ def nxm_registered():
         return False
 
 
+class _SA(ctypes.Structure):  # SECURITY_ATTRIBUTES
+    _fields_ = [("nLength", wintypes.DWORD), ("lpSecurityDescriptor", ctypes.c_void_p), ("bInheritHandle", wintypes.BOOL)]
+
+
+class _OwnerOnlyPipe(PipeListener):
+    """PipeListener whose pipe only its owner (the account that started the window) can open. The default
+    also lets every other account and anonymous users open it for reading and hold a connection slot."""
+
+    def __init__(self, address):
+        sd = ctypes.c_void_p()  # kept for the life of the process
+        if not ctypes.windll.advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW("D:P(A;;GA;;;OW)", 1,
+                                                                                         ctypes.byref(sd), None):
+            raise ctypes.WinError()
+        self._sa = _SA(ctypes.sizeof(_SA), sd, False)
+        super().__init__(address)
+
+    def _new_handle(self, first=False):  # PipeListener._new_handle with the security attributes above
+        flags = _winapi.PIPE_ACCESS_DUPLEX | _winapi.FILE_FLAG_OVERLAPPED
+        if first:
+            flags |= _winapi.FILE_FLAG_FIRST_PIPE_INSTANCE
+        return _winapi.CreateNamedPipe(self._address, flags,
+                                       _winapi.PIPE_TYPE_MESSAGE | _winapi.PIPE_READMODE_MESSAGE | _winapi.PIPE_WAIT,
+                                       _winapi.PIPE_UNLIMITED_INSTANCES, BUFSIZE, BUFSIZE, _winapi.NMPWAIT_WAIT_FOREVER,
+                                       ctypes.addressof(self._sa))
+
+
+class OwnerListener(Listener):
+    """Listener(address, family="AF_PIPE") on an owner-only pipe."""
+
+    def __init__(self, address):
+        self._listener, self._authkey = _OwnerOnlyPipe(address), None
+
+
 class HandOver(threading.Thread):
     """One attempt to give msg to the running window, on a helper thread so that a pipe holder that never
     answers cannot block start-up. `ok` turns True only when the window confirms it took the link."""
@@ -78,10 +115,13 @@ def ask_window(tool, args, wait=40):
         try:
             c = Client(PIPE, family="AF_PIPE", authkey=TOKEN.read_bytes().strip())
             break
-        except (OSError, EOFError, AuthenticationError):
+        except (OSError, EOFError, AuthenticationError) as e:
             if time.monotonic() > deadline:
-                raise RuntimeError("The mod manager window did not start. Start it, then try again.") from None
-            if not started:
+                raise RuntimeError("The mod manager window did not start or did not answer. Start it normally (not as "
+                                   "administrator), or wait until it is free, then try again.") from None
+            # no pipe or no token: no window yet. A busy pipe or a refused token means one runs, and a second copy
+            # would only show the "still running" message.
+            if not started and isinstance(e, FileNotFoundError):
                 started = True
                 cmd = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, str(Path(__file__).resolve())]
                 # a new copy of the one-file exe, not one that shares this process's unpacked files: else this
@@ -115,7 +155,7 @@ def main(wait=15):
             if attempt.ok:
                 return
             try:
-                server = Listener(PIPE, family="AF_PIPE")  # fails while any window of ours (or anyone) holds the name
+                server = OwnerListener(PIPE)  # fails while any window of ours (or anyone) holds the name
                 break
             except OSError:
                 pass
@@ -123,7 +163,6 @@ def main(wait=15):
             attempt.join(1)  # one last chance for an answer that is on its way
             if attempt.ok:
                 return
-            import ctypes
             ctypes.windll.user32.MessageBoxW(None, "The mod manager is still running and did not answer. If it is closing, "
                                                    "try again in a moment. If it runs as administrator, close it and start it "
                                                    "normally.", "CP2077 AI Mod Manager", 0x30)

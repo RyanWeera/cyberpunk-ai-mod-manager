@@ -126,7 +126,7 @@ def parse_link(text):
         if len(parts) >= 3 and parts[1] == "collections":
             return {"type": "collection", "slug": parts[2], "revision": int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else None}
     host = u.netloc.lower()
-    if host.endswith("nexusmods.com"):
+    if host == "nexusmods.com" or host.endswith(".nexusmods.com"):  # not evilnexusmods.com
         if GAME not in u.path.lower():
             raise ValueError(f"Not a Cyberpunk 2077 link: {s}")
         c = re.search(r"/collections/([A-Za-z0-9]+)(?:/revisions/(\d+))?", u.path)

@@ -1,6 +1,7 @@
 """Find mod from video, offline: pages and Nexus answers are canned."""
 import json
 import unittest
+import urllib.request
 from types import SimpleNamespace
 from unittest import mock
 
@@ -105,12 +106,49 @@ class Finder(unittest.TestCase):
             self.assertEqual(finder.find("www.nexusmods.com/cyberpunk2077/mods/4714")[1][0]["name"], "Stand Still Please")
         vt.assert_called_once_with("https://youtu.be/dQw4w9WgXcQ")  # a Nexus link is read as it is, not opened as a video
 
+    def test_hostile_instagram_page_stays_fast(self):
+        url = "https://www.instagram.com/p/x/embed/captioned/"
+        self.pages[url] = ('<div class="Caption">' * 100_000, "")  # minutes with a pattern over the whole page
+        self.assertEqual(finder.video_text("https://www.instagram.com/p/x/"), ("", ""))
+        self.pages[url] = ('<div class="Caption">' + "<" * 1_000_000 + '<div class="CaptionComments">', "")
+        self.assertEqual(len(finder.video_text("https://www.instagram.com/p/x/")[1]), 20_000)
+
     def test_errors_reach_the_window(self):
         self.pages["https://www.youtube.com/watch?v=8Yexbiw0T28"] = ("<html>consent page</html>", "")
         events = []
         Controller.find_in_video(SimpleNamespace(notify=lambda k, p: events.append((k, p))), "https://youtu.be/8Yexbiw0T28")
         self.assertEqual(events[0][0], "video")
         self.assertIn("YouTube did not show this video", events[0][1]["error"])
+
+
+def resolves_to(addr):
+    return mock.patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", (addr, 0))])
+
+
+class PublicPagesOnly(unittest.TestCase):
+    def test_this_pc_and_the_local_network_are_refused(self):
+        for addr in ("127.0.0.1", "10.1.2.3", "192.168.0.10", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1",
+                     "::ffff:127.0.0.1", "fe80::1%3"):
+            with resolves_to(addr), mock.patch.object(finder.OPENER, "open") as get:
+                with self.assertRaisesRegex(ValueError, "local network", msg=addr):
+                    finder.page("https://video.example/v")
+                get.assert_not_called()
+        for bad in ("file:///C:/x", "ftp://video.example/x", "https:///x"):
+            with self.assertRaisesRegex(ValueError, "http"):
+                finder.public(bad)
+
+    def test_public_pages_load_and_redirects_are_checked(self):
+        with resolves_to("93.184.215.14"), mock.patch.object(finder.OPENER, "open") as get:
+            get.return_value.__enter__.return_value = SimpleNamespace(read=lambda n: b"hi", url="https://video.example/v")
+            self.assertEqual(finder.page("https://video.example/v"), ("hi", "https://video.example/v"))
+        redirect, req = finder._PublicRedirects(), urllib.request.Request("https://video.example/v")
+        with resolves_to("127.0.0.1"), self.assertRaisesRegex(ValueError, "local network"):
+            redirect.redirect_request(req, None, 302, "Found", {}, "http://localhost:8080/admin")
+        with self.assertRaisesRegex(ValueError, "http"):
+            redirect.redirect_request(req, None, 302, "Found", {}, "ftp://video.example/x")
+        with resolves_to("93.184.215.14"):
+            self.assertEqual(redirect.redirect_request(req, None, 302, "Found", {}, "https://www.video.example/v").full_url,
+                             "https://www.video.example/v")
 
 
 if __name__ == "__main__":
