@@ -263,7 +263,7 @@ class Window(unittest.TestCase):
         app.refresh_mods()
         app.select_all()
         self.assertEqual(set(app.mods.selection()), {"a", "b"})
-        self.assertIn("1.0.1", top.title())
+        self.assertIn("1.0.2", top.title())
         released = []
 
         def busy_copy():

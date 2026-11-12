@@ -6,7 +6,7 @@ import re
 import threading
 from pathlib import Path
 
-VERSION = "1.0.1"  # window title, MCP server and the Nexus Application-Version header
+VERSION = "1.0.2"  # window title, MCP server and the Nexus Application-Version header
 DATA = Path(os.environ.get("CP2077MM_DATA") or Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "CP2077ModManager")
 GAME_EXE = "bin/x64/Cyberpunk2077.exe"
 DEFAULTS = {"game_dir": "", "api_key": "", "virus_scan": True, "auto_fix": True, "include_optional": True, "ai_model": "qwen3.5:4b"}
