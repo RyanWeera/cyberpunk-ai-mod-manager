@@ -15,7 +15,9 @@ from crash_doctor import doctor, watch
 from downloads import nexus
 from downloads.fetch import FRAMEWORKS, FW_BY_NEXUS, FW_BY_REPO, download, github_latest
 from installer import deploy, install
+from local_ai import ollama
 from shared.store import GAME_EXE
+from video_finder import finder
 from virus_scan import scan
 
 CORE = ["RED4ext", "Cyber Engine Tweaks", "redscript", "ArchiveXL", "TweakXL", "Codeware"]
@@ -26,6 +28,8 @@ class Controller:
         self.store, self.notify = store, notify
         self.jobs, self.lock, self.work, self.ids = [], threading.RLock(), queue.Queue(), itertools.count(1)
         self.premium, self.clicking, self.stop = False, None, threading.Event()
+        for old in store.downloads.glob("job-*"):  # left by jobs that the app's close cut off (only one window runs)
+            shutil.rmtree(old, ignore_errors=True)
         for _ in range(workers):
             threading.Thread(target=self._worker, daemon=True).start()
         if watch_game:
@@ -65,6 +69,10 @@ class Controller:
     # ---------- links and jobs ----------
     def add_links(self, text):
         self.bg(self._expand, [ln for ln in text.splitlines() if ln.strip()])
+
+    def add_link(self, link):
+        """One link that is parsed already, such as the nxm link the user said yes to."""
+        self.bg(self._add, link)
 
     def _expand(self, lines):
         for line in lines:
@@ -141,10 +149,16 @@ class Controller:
 
     def handle_nxm(self, url):
         """An nxm:// link from the browser. A link that a waiting download asked for continues that download.
-        Any other link may come from any web page, so the user is asked before anything is installed."""
+        Any other link may come from any web page, so the user is asked before anything is installed. The question
+        carries the parsed link, never the text: on "yes" only what the question names is queued."""
         link = nexus.parse_link(url)
         if link["type"] != "nexus":
-            return self.notify("confirm", {"url": url, "text": "Download and install this Nexus collection?"})
+            name = link["slug"]
+            try:
+                name = nexus.collection_info(link["slug"])["name"]
+            except Exception:  # noqa: BLE001 - offline or gone: ask with the slug instead
+                pass
+            return self.notify("confirm", {"link": link, "text": f"Download and install the Nexus collection '{name}'?"})
         with self.lock:
             j = next((j for j in self.jobs if j["state"] == "waiting" and j["src"]["mod_id"] == link["mod_id"]
                       and j["src"]["file_id"] == link["file_id"]), None)
@@ -161,7 +175,7 @@ class Controller:
             name = nexus.mod_info(link["mod_id"], self.key)["name"]
         except Exception:  # noqa: BLE001 - offline or unknown: ask with the number instead
             pass
-        self.notify("confirm", {"url": url, "text": f"Download and install '{name}' (file {link['file_id']}) from Nexus?"})
+        self.notify("confirm", {"link": link, "text": f"Download and install '{name}' (file {link['file_id']}) from Nexus?"})
 
     def _next_click(self):
         """Free accounts: open the Nexus page of the next waiting file, one at a time."""
@@ -239,11 +253,13 @@ class Controller:
                 path = download(rel["url"], work, prog)
             elif s["type"] == "url":
                 path = download(s["url"], work, prog)
-            else:  # a file from the PC: copied under a fixed plain name (for Defender's command line); the original stays
-                self._set(j, "Copying")
-                suffix = Path(s["path"]).suffix.lower()
-                path = work / ("archive" + (suffix if re.fullmatch(r"\.[a-z0-9]{1,5}", suffix) else ""))
-                shutil.copyfile(s["path"], path)
+            else:  # a file from the PC is only read. Defender gets a copy under a fixed plain name (its command line).
+                path = Path(s["path"])
+                if self.store.settings["virus_scan"]:
+                    self._set(j, "Copying")
+                    suffix = path.suffix.lower()
+                    path = work / ("archive" + (suffix if re.fullmatch(r"\.[a-z0-9]{1,5}", suffix) else ""))
+                    shutil.copyfile(s["path"], path)
             if self.store.settings["virus_scan"]:
                 self._set(j, "Scanning for viruses")
                 clean, detail = scan.scan(path)
@@ -398,7 +414,9 @@ class Controller:
 
     def check_now(self):
         since = self.store.doctor.get("last_launch", 0)
-        self.handle_problems(doctor.diagnose(self.store, since, None, self.has_update))
+        probs = doctor.diagnose(self.store, since, None, self.has_update)
+        self.handle_problems(probs)
+        return probs
 
     def handle_problems(self, probs, crashed=False):
         ask = []
@@ -418,11 +436,16 @@ class Controller:
                 ids = args[0] if verb == "disable_many" else [args[0]]
                 undo = ["states", {m["id"]: m["enabled"] for m in st.mods if m["id"] in ids}]
                 self.set_enabled(ids, verb == "enable")
-            elif verb == "prefer":  # let args[0] win over args[1]: move it just below
+            elif verb == "order":  # args[0]: mod ids in the new order
                 undo = ["order", [m["id"] for m in st.mods]]
+                self._order(args[0])
+            elif verb == "prefer":  # let args[0] win over args[1]: move it just below, and keep the choice for Auto-sort
+                pid = f"conflict-{args[1]}-{args[0]}"
+                undo = ["prefer", [[m["id"] for m in st.mods], pid]]
                 lo = st.mod(args[0])
                 st.mods.remove(lo)
                 st.mods.insert(st.mods.index(st.mod(args[1])) + 1, lo)
+                st.doctor.setdefault("ignored", []).append(pid)
             elif verb == "ignore":
                 st.doctor.setdefault("ignored", []).append(args[0])
                 undo = ["unignore", args[0]]
@@ -449,14 +472,78 @@ class Controller:
                 for m in st.mods:
                     m["enabled"] = arg.get(m["id"], m["enabled"])
             elif kind == "order":
-                pos = {mid: n for n, mid in enumerate(arg)}
-                st.mods.sort(key=lambda m: pos.get(m["id"], len(pos)))
+                self._order(arg)
             elif kind == "unignore":
                 st.doctor["ignored"].remove(arg)
+            elif kind == "prefer":
+                self._order(arg[0])
+                st.doctor["ignored"].remove(arg[1])
             st.save()
         self.notify("mods", None)
         if st.game():
             self.redeploy()
+
+    def _order(self, ids):
+        """Sort the mod list by `ids`; a mod not in `ids` (added since) goes last, in its old order."""
+        pos = {mid: n for n, mid in enumerate(ids)}
+        self.store.mods.sort(key=lambda m: pos.get(m["id"], len(pos)))
+
+    def auto_sort(self):
+        """Put the mods in the best load order (the Crash doctor can undo it), then check them for problems."""
+        order = doctor.best_order(self.store)
+        moved = doctor.moved([m["id"] for m in self.store.mods], order)
+        if moved:
+            self.apply({"title": "Load order"}, doctor.fix(f"Sorted automatically ({moved} mod(s) changed place)", "order", order))
+        msg = (f"Load order sorted: {moved} mod(s) changed place." if moved else
+               "The mods are already in the best load order I can find.")
+        self.notify("log", msg)
+        self.check_now()
+        return msg
+
+    # ---------- local AI ----------
+    def setup_ai(self, model):
+        """Install and start Ollama when needed, then download the model."""
+        try:
+            if not ollama.exe():
+                self.notify("ai_status", "Installing Ollama (the program that runs the local AI)…")
+                ollama.install()
+            ollama.start()
+            if not ollama.has_model(model):
+                self.notify("ai_status", f"Downloading {model}…")
+                ollama.pull(model, lambda pct: self.notify("ai_status", f"Downloading {model}: {pct}%"))
+            self.notify("ai_status", f"✔ Ready: {model} runs on this PC.")
+        except Exception as e:  # noqa: BLE001 - shown to the user
+            self.notify("ai_status", f"✖ {e}")
+
+    def ask_ai(self):
+        """Check the mods, let the local AI pick fixes and load-order rules, and send the advice to the window."""
+        try:
+            ollama.start()
+            probs = self.check_now()
+            # One copy of the list: the AI's mod numbers map back to it, and a framework install can shift the live one.
+            a = ollama.advise(self.store.settings["ai_model"], list(self.store.mods), probs)
+            a["fixes"] = a["fixes"][:10]  # the window lists 10: apply only fixes the user saw
+            order = doctor.best_order(self.store, a["after"])
+            moved = doctor.moved([m["id"] for m in self.store.mods], order)
+            self.notify("ai", {**a, "order": order if moved else None, "moved": moved})
+        except Exception as e:  # noqa: BLE001 - shown to the user
+            self.notify("ai", {"error": str(e)})
+
+    def apply_ai(self, a):
+        """The order first, so that a fix that moves one mod (prefer) keeps the last word."""
+        if a["order"]:
+            self.apply({"title": "Load order"}, doctor.fix(f"Sorted by the local AI ({a['moved']} mod(s) changed place)", "order", a["order"]))
+        for p, f, _ in a["fixes"]:
+            self.apply(p, f)
+        self.check_now()
+
+    # ---------- find mods from a video ----------
+    def find_in_video(self, entry):
+        try:
+            title, rows = finder.find(entry)
+        except Exception as e:  # noqa: BLE001 - shown to the user (page blocked or gone, no network, Nexus down)
+            return self.notify("video", {"error": str(e)})
+        self.notify("video", {"title": title, "rows": rows})
 
     # ---------- bad-mod search (bisect) ----------
     def bisect_begin(self):

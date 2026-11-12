@@ -2,7 +2,9 @@ import struct
 import tempfile
 import time
 import unittest
+from collections import Counter
 from pathlib import Path
+from unittest import mock
 
 from crash_doctor import doctor
 from crash_doctor.watch import dump_module, parse_events
@@ -109,6 +111,36 @@ class Doctor(unittest.TestCase):
                          [["ignore", "conflict-x-y"], ["prefer", "x", "y"], ["disable", "x"], ["disable", "y"]])
         s.doctor["ignored"] = ["conflict-x-y"]
         self.assertEqual(doctor.archive_conflicts(s), [])
+
+    def test_best_order(self):
+        s = Store(Path(tempfile.mkdtemp()))
+        for mid, hashes, kw in [
+                ("patch", [1, 2], {}),
+                ("addon", range(1, 21), {"requires": [{"mod_id": 100, "name": "Big"}]}),  # bigger, but needs big
+                ("big", range(1, 11), {"source": {"type": "nexus", "mod_id": 100, "file_id": 1}}),
+                ("other", [99], {}),
+                ("k1", [50, 51], {}),  # smaller, but the user chose to keep k2 winning
+                ("k2", [50, 51, 52], {}),
+                ("fw", [], {"framework": "ArchiveXL"})]:
+            rel = f"archive/pc/mod/{mid}.archive"
+            stage(s, mod(mid, [rel], **kw), {rel: rdar(hashes)})
+        s.doctor["ignored"] = ["conflict-k1-k2"]
+        self.assertEqual(doctor.best_order(s), ["fw", "big", "addon", "patch", "other", "k1", "k2"])
+        # the local AI's rules: patch after other; addon before big loses to addon's own requirement
+        self.assertEqual(doctor.best_order(s, [("other", "patch"), ("addon", "big"), ("gone", "patch")]),
+                         ["fw", "big", "addon", "other", "patch", "k1", "k2"])
+
+    def test_best_order_skips_a_mod_added_while_it_reads(self):
+        s = Store(Path(tempfile.mkdtemp()))
+        s.mods = [mod("a", []), mod("b", [])]
+        with mock.patch.object(doctor, "overlaps", return_value=({"a": 1, "b": 1, "new": 5}, Counter({("a", "new"): 1}))):
+            self.assertEqual(doctor.best_order(s), ["a", "b"])  # "new" came from a framework install meanwhile
+
+    def test_moved_counts_only_mods_that_left_their_place(self):
+        self.assertEqual(doctor.moved(list("abcde"), list("eabcd")), 1)  # one mod to the top shifts the others, it moves one
+        self.assertEqual(doctor.moved(list("abc"), list("abc")), 0)
+        self.assertEqual(doctor.moved(list("abc"), list("cba")), 2)
+        self.assertEqual(doctor.moved(list("ab"), list("xba")), 1)  # a mod added meanwhile does not count
 
     def test_bisect_finds_culprit(self):
         state = {"suspects": list("abcdefg"), "testing": list("abcd"), "restore": list("abcdefg")}

@@ -4,6 +4,8 @@ A problem is {"id", "title", "detail", "severity", "auto", "fixes": [{"label", "
 `action` is a list the controller runs, e.g. ["disable", mod_id]. A problem with exactly one fix and
 auto=True is fixed without asking; any other problem is shown to the user to pick a fix.
 """
+import bisect
+import heapq
 import re
 import struct
 from collections import Counter
@@ -164,14 +166,20 @@ def archive_hashes(path):
         return set()
 
 
-def archive_conflicts(store):
-    owners = {}
+def overlaps(store):
+    """(sizes, pairs): how many archive resources each enabled mod changes, and how many resources each
+    pair of mods (lower, higher in the list) both change."""
+    owners, sizes = {}, {}
     for m in store.enabled():
-        for rel in m["files"]:
-            if rel.lower().endswith(".archive"):
-                for h in archive_hashes(store.staging / m["id"] / rel):
-                    owners.setdefault(h, []).append(m["id"])
-    pairs = Counter(p for ids in owners.values() for p in combinations(dict.fromkeys(ids), 2))
+        res = set().union(*(archive_hashes(store.staging / m["id"] / r) for r in m["files"] if r.lower().endswith(".archive")))
+        sizes[m["id"]] = len(res)
+        for h in res:
+            owners.setdefault(h, []).append(m["id"])
+    return sizes, Counter(p for ids in owners.values() for p in combinations(ids, 2))
+
+
+def archive_conflicts(store):
+    _, pairs = overlaps(store)
     ignored = set(store.doctor.get("ignored", []))
     out = []
     for (lo, hi), n in pairs.most_common(50):
@@ -198,6 +206,68 @@ def changed_since_good(store):
     return problem("unknown", "The crash left no clue in the logs",
                    ("Changed since the last good launch: " + ", ".join(m["name"] for m in changed[:8])) if changed else
                    "No launch without a crash is on record yet.", fixes, auto=False)
+
+
+def best_order(store, after=()):
+    """Every mod id in the load order most likely to work (index 0 = lowest priority). Frameworks go first,
+    each mod wins over the mods it requires, and of two mods that change the same game resources the one
+    that changes fewer wins: it is usually a patch or add-on for the bigger one. A conflict the user chose
+    to keep keeps its winner. `after`: more (lo, hi) pairs where hi must win, such as the patches the local AI
+    found by name; they rank below the rules above them, above the size rule. A mod that no rule moves keeps its place
+    relative to the others."""
+    mods = list(store.mods)  # a framework install can insert into the live list while the archives are read
+    pos = {m["id"]: i for i, m in enumerate(mods)}
+    fw = {m["id"] for m in mods if m.get("framework")}
+    beats = {mid: set() for mid in pos}  # mod -> the mods that must win over it
+
+    def wins(lo, hi):  # hi wins over lo, unless the rules so far already make lo win over hi
+        # ponytail: one graph walk per rule; fine for hundreds of mods, keep reachability sets if it gets slow
+        seen, todo = set(), [hi]
+        while todo:
+            x = todo.pop()
+            if x == lo:
+                return
+            if x not in seen:
+                seen.add(x)
+                todo += beats[x]
+        beats[lo].add(hi)
+
+    nexus = {}
+    for m in mods:
+        if m["source"]["type"] == "nexus":
+            nexus.setdefault(m["source"]["mod_id"], []).append(m["id"])
+    rules = [(rid, m["id"]) for m in mods for r in m.get("requires", []) for rid in nexus.get(r["mod_id"], [])]
+    sizes, pairs = overlaps(store)
+    kept = set(store.doctor.get("ignored", []))
+    rules += [(a, b) if f"conflict-{a}-{b}" in kept else (b, a) for a, b in pairs
+              if {f"conflict-{a}-{b}", f"conflict-{b}-{a}"} & kept]
+    rules += [(lo, hi) for lo, hi in after if lo in pos and hi in pos]
+    rules += [sorted(p, key=sizes.get, reverse=True) for p, _ in pairs.most_common() if sizes[p[0]] != sizes[p[1]]]
+    for lo, hi in rules:
+        if lo != hi and lo in pos and hi in pos and not {lo, hi} & fw:  # in pos: not a mod added meanwhile
+            wins(lo, hi)
+    waits = Counter(hi for his in beats.values() for hi in his)
+    ready = [(mid not in fw, pos[mid]) for mid in pos if not waits[mid]]
+    heapq.heapify(ready)
+    out = []
+    while ready:  # the earliest free mod next, frameworks before all others
+        mid = mods[heapq.heappop(ready)[1]]["id"]
+        out.append(mid)
+        for hi in beats[mid]:
+            waits[hi] -= 1
+            if not waits[hi]:
+                heapq.heappush(ready, (hi not in fw, pos[hi]))
+    return out
+
+
+def moved(old, new):
+    """How many mods the order `new` moves compared with `old`: all but the most that keep their order."""
+    pos, tails = {mid: i for i, mid in enumerate(old)}, []
+    places = [pos[mid] for mid in new if mid in pos]
+    for i in places:  # the longest increasing run of old places (patience sort) is what stays
+        k = bisect.bisect(tails, i)
+        tails[k:k + 1] = [i]
+    return len(places) - len(tails)
 
 
 def diagnose(store, since=0.0, crash=None, has_update=None):

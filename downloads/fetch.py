@@ -7,7 +7,9 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-UA = {"User-Agent": "CP2077-AI-Mod-Manager/1.0", "Application-Name": "CP2077 AI Mod Manager", "Application-Version": "1.0"}
+from shared.store import VERSION
+
+UA = {"User-Agent": f"CP2077-AI-Mod-Manager/{VERSION}", "Application-Name": "CP2077 AI Mod Manager", "Application-Version": VERSION}
 
 # Frameworks most mods need. They all publish GitHub releases, so they download with no clicks and no account.
 FRAMEWORKS = {

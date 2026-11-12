@@ -1,4 +1,5 @@
-"""Cyberpunk 2077 AI Mod Manager. Run: python app.py  (Nexus starts it as: app.py "nxm://...")
+"""Cyberpunk 2077 AI Mod Manager. Run: python app.py  (Nexus starts it as: app.py "nxm://...";
+AI apps start it as: app.py --mcp)
 
 Only one window runs. A second start (for example from a Nexus "Mod Manager Download" click)
 hands its nxm:// link to the running window over a per-user named pipe and exits. Both sides
@@ -6,7 +7,10 @@ prove they know a random token that the running window writes to the user's own 
 so other users cannot send links to it or pose as it."""
 import getpass
 import hashlib
+import json
+import os
 import secrets
+import subprocess
 import sys
 import threading
 import time
@@ -66,13 +70,48 @@ class HandOver(threading.Thread):
             pass
 
 
+def ask_window(tool, args, wait=40):
+    """Run one AI-app tool in the window and return its text. A window that is not running is started first.
+    Only connecting is retried: a command that was sent is never sent twice."""
+    deadline, started = time.monotonic() + wait, False
+    while True:
+        try:
+            c = Client(PIPE, family="AF_PIPE", authkey=TOKEN.read_bytes().strip())
+            break
+        except (OSError, EOFError, AuthenticationError):
+            if time.monotonic() > deadline:
+                raise RuntimeError("The mod manager window did not start. Start it, then try again.") from None
+            if not started:
+                started = True
+                cmd = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, str(Path(__file__).resolve())]
+                # a new copy of the one-file exe, not one that shares this process's unpacked files: else this
+                # process cannot clean them up and exit while the window runs
+                subprocess.Popen(cmd, creationflags=subprocess.DETACHED_PROCESS, close_fds=True,
+                                 env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(0.5)
+    with c:
+        c.send_bytes(json.dumps({"tool": tool, "args": args}).encode())
+        r = json.loads(c.recv_bytes())
+    if "error" in r:
+        raise RuntimeError(r["error"])
+    return r["text"]
+
+
 def main(wait=15):
+    if "--mcp" in sys.argv[1:]:  # started by an AI app: no window here, just the MCP server
+        if sys.stdin:
+            from ai_link import mcp
+            from shared.store import VERSION
+            mcp.serve(ask_window, VERSION)
+        return
     url = next((a for a in sys.argv[1:] if a.lower().startswith("nxm://")), None)
     deadline = time.monotonic() + wait  # a window that is starting (token appears) or closing (pipe frees)
     attempt, started = HandOver(url or "show"), time.monotonic()
     while True:
         attempt.join(0.5)
-        if not attempt.is_alive():  # only one attempt at a time, so a link is delivered at most once
+        done = not attempt.is_alive()  # read once: an attempt that ends between two reads would be started again
+        if done:  # only one attempt at a time, so a link is delivered at most once
             if attempt.ok:
                 return
             try:
@@ -89,7 +128,7 @@ def main(wait=15):
                                                    "try again in a moment. If it runs as administrator, close it and start it "
                                                    "normally.", "CP2077 AI Mod Manager", 0x30)
             return
-        if not attempt.is_alive():
+        if done:
             time.sleep(max(0.0, started + 0.5 - time.monotonic()))  # at most 2 tries a second, never a busy loop
             attempt, started = HandOver(url or "show"), time.monotonic()
     token = secrets.token_hex(16).encode()  # written only once this process owns the pipe

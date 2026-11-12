@@ -10,13 +10,14 @@ from pathlib import Path
 
 EXE = "Cyberpunk2077.exe"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+SYS32 = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"  # full paths: Windows looks next to our exe first
 SYNCHRONIZE, QUERY_LIMITED = 0x00100000, 0x1000
 WAIT_TIMEOUT = 0x102
 
 
 def find_pid():
     try:
-        r = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {EXE}", "/NH", "/FO", "CSV"], capture_output=True, text=True,
+        r = subprocess.run([str(SYS32 / "tasklist.exe"), "/FI", f"IMAGENAME eq {EXE}", "/NH", "/FO", "CSV"], capture_output=True, text=True,
                            errors="replace", creationflags=NO_WINDOW, timeout=60)
     except subprocess.TimeoutExpired:
         return None
@@ -106,7 +107,7 @@ def crash_evidence(since, exit_code=None, tries=4, lag=10):
         q = (f"*[System[(Provider[@Name='Application Error'] or Provider[@Name='Application Hang'])"
              f" and TimeCreated[timediff(@SystemTime) <= {ms}]]]")
         try:
-            out = subprocess.run(["wevtutil", "qe", "Application", f"/q:{q}", "/f:text", "/rd:true", "/c:20"], capture_output=True,
+            out = subprocess.run([str(SYS32 / "wevtutil.exe"), "qe", "Application", f"/q:{q}", "/f:text", "/rd:true", "/c:20"], capture_output=True,
                                  text=True, errors="replace", creationflags=NO_WINDOW, timeout=60).stdout
         except subprocess.TimeoutExpired:
             out = ""

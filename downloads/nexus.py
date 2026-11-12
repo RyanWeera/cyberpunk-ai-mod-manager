@@ -64,6 +64,37 @@ def collection(slug, revision=None, api_key=""):
                        "name": f["file"]["mod"]["name"], "version": f["file"]["version"]} for f in rev["modFiles"] if f.get("file")]}
 
 
+def mod_names(ids):
+    """{mod id: {"name", "endorsements"}} for Cyberpunk mods, in one request. Hidden or deleted mods are left out."""
+    d = gql("""query($ids: [CompositeDomainWithIdInput!]!, $n: Int) {
+      legacyModsByDomain(ids: $ids, count: $n) { nodes { modId name endorsements } } }""",
+            ids=[{"gameDomain": GAME, "modId": int(i)} for i in ids], n=len(ids))
+    return {int(n["modId"]): n for n in d["legacyModsByDomain"]["nodes"]}
+
+
+def collection_info(slug):
+    """{"name", "endorsements"} of a Cyberpunk collection, without its file list. RuntimeError when it is gone."""
+    return gql("""query($s: String!) { collection(slug: $s, domainName: "%s", viewAdultContent: true) {
+      name endorsements } }""" % GAME, s=slug)["collection"]
+
+
+def search(words):
+    """Cyberpunk mods with any of `words` in their name, best first. Mods with every word come first, the most
+    endorsed of them first (the original before its translations); then partial matches in Nexus relevance order."""
+    q = """query($w: [BaseFilterValue!], $sort: [ModsSort!]) { mods(filter: {op: AND,
+      gameDomainName: [{value: "%s", op: EQUALS}], filter: [{op: OR, nameStemmed: $w}]}, sort: $sort, count: 20) {
+      nodes { modId name endorsements } } }""" % GAME
+    found = {}
+    for sort in ("relevance", "endorsements"):
+        for rank, n in enumerate(gql(q, w=[{"value": x, "op": "MATCHES"} for x in words], sort=[{sort: {"direction": "DESC"}}])["mods"]["nodes"]):
+            found.setdefault(n["modId"], {**n, "rank": rank if sort == "relevance" else 99})
+
+    def key(n):
+        hits = sum(x.lower() in n["name"].lower() for x in words)
+        return (-hits, 0, -n["endorsements"]) if hits == len(words) else (-hits, 1, n["rank"])
+    return sorted(found.values(), key=key)
+
+
 def validate(api_key):
     return http_json(f"{API}/users/validate.json", headers={"apikey": api_key})
 

@@ -1,4 +1,5 @@
 """Builds the real window (hidden) on a throwaway store and drives its actions."""
+import json
 import tempfile
 import threading
 import time
@@ -85,6 +86,28 @@ class Window(unittest.TestCase):
         self.assertEqual(str(app.tabs.select()), str(app.tab["Downloads"]))
         self.assertIn("Added 2 link(s)", app.status.cget("text"))
 
+    def test_find_mod_from_video(self):
+        app = self.app
+        with mock.patch.object(app.ctl, "bg") as bg:
+            app.find_video()
+            bg.assert_not_called()  # nothing pasted
+            app.video.set(" https://youtu.be/8Yexbiw0T28 ")
+            app.find_video()
+        bg.assert_called_once_with(app.ctl.find_in_video, "https://youtu.be/8Yexbiw0T28")
+        a, b = "https://www.nexusmods.com/cyberpunk2077/mods/1", "https://github.com/a/b"
+        app.show_found({"title": "Top mods", "rows": [{"name": "Nova LUT", "url": a, "why": "Linked in the video", "endorsements": 5},
+                                                      {"name": "a/b", "url": b, "why": "Linked in the video", "endorsements": None}]})
+        self.assertEqual(app.found.get_children(), (a, b))
+        self.assertEqual(app.video_info.cget("text"), '"Top mods"   2 mod(s) linked in the video.')
+        app.found.selection_set(b)
+        with mock.patch.object(app.ctl, "add_links") as add:
+            app.add_found()
+        add.assert_called_once_with(b)
+        self.assertEqual(str(app.tabs.select()), str(app.tab["Downloads"]))
+        app.show_found({"error": "HTTP Error 404: Not Found"})
+        self.assertEqual(app.found.get_children(), ())
+        self.assertIn("404", app.video_info.cget("text"))
+
     def test_download_banner_progress_and_tabs(self):
         app = self.app
         j = {"id": 1, "name": "HUD", "src": {"type": "nexus", "mod_id": 1, "file_id": 2}, "state": "needkey",
@@ -130,6 +153,41 @@ class Window(unittest.TestCase):
                     c.send_bytes(b"nxm://cyberpunk2077/mods/1/files/3?key=a&expires=1")
         nxm.assert_called_once()
 
+    def test_ai_app_tool_call_over_the_pipe(self):
+        pipe = rf"\\.\pipe\cp2077mm-test-{uuid.uuid4().hex}"
+        server = Listener(pipe, family="AF_PIPE")
+        top = tk.Toplevel(self.root)
+        app = ui.App(top, server=server, store=self.store, token=b"t0k3n")
+        self.addCleanup(lambda: (app.ctl.stop.set(), top.after_cancel(app.tick), server.close()))
+        with Client(pipe, family="AF_PIPE", authkey=b"t0k3n") as c:
+            c.send_bytes(json.dumps({"tool": "status", "args": {}}).encode())
+            self.assertIn("Game folder: not set", json.loads(c.recv_bytes())["text"])
+        with Client(pipe, family="AF_PIPE", authkey=b"t0k3n") as c:
+            c.send_bytes(b'{"tool": "nope"}')
+            self.assertIn("error", json.loads(c.recv_bytes()))
+
+    def test_ai_tab_setup_text_and_advice(self):
+        app = self.app
+        self.assertIn("AI helpers", app.tab)
+        app.copy_setup(True)
+        server = json.loads(self.root.clipboard_get())["mcpServers"]["cp2077-ai-mod-manager"]
+        self.assertEqual(server["args"][-1], "--mcp")
+        app.copy_setup(False)
+        self.assertTrue(self.root.clipboard_get().startswith("claude mcp add --scope user cp2077-ai-mod-manager -- "))
+        advice = {"summary": "s", "fixes": [({"title": "t"}, {"label": "Turn A off"}, "w")], "order": ["a"], "moved": 1}
+        for answer in (False, True):
+            with mock.patch.object(ui.messagebox, "askyesno", return_value=answer) as ask, mock.patch.object(app.ctl, "bg") as bg:
+                app.show_ai(advice)
+            self.assertIn("1 mod(s) change place", ask.call_args.args[1])
+            self.assertIn("t  →  Turn A off", ask.call_args.args[1])
+            self.assertEqual(bg.call_count, int(answer))
+        with mock.patch.object(ui.messagebox, "showinfo") as info:
+            app.show_ai({"summary": "", "fixes": [], "order": None, "moved": 0})
+        self.assertIn("nothing to change", info.call_args.args[1])
+        with mock.patch.object(ui.messagebox, "showerror") as err:
+            app.show_ai({"error": "Ollama did not start."})
+        err.assert_called_once_with("Local AI", "Ollama did not start.")
+
     def test_stalled_pipe_callers_are_cut_off(self):
         pipe = rf"\\.\pipe\cp2077mm-test-{uuid.uuid4().hex}"
         server = Listener(pipe, family="AF_PIPE")
@@ -144,15 +202,36 @@ class Window(unittest.TestCase):
             c.send_bytes(b"show")
             self.assertEqual(c.recv_bytes(), b"ok")
 
+    def test_cut_off_caller_is_closed_once(self):
+        closes, cut = [], threading.Event()
+
+        class Stalled:  # answers nothing; reading ends only when the time limit closes it
+            def send_bytes(self, b):
+                pass
+
+            def recv_bytes(self, n=None):
+                cut.wait(5)
+                raise OSError("closed")
+
+            def close(self):
+                closes.append(threading.current_thread().name)
+                cut.set()
+
+        self.app.handshake_timeout = 0.2
+        self.app._take(Stalled())
+        self.assertEqual(len(closes), 1)  # the timer closed it; the handshake thread must not close the handle again
+
     def test_unrequested_link_needs_a_yes(self):
         app = self.app
         for answer in (False, True):
-            with mock.patch.object(ui.messagebox, "askyesno", return_value=answer), \
-                    mock.patch.object(app.ctl, "add_links") as add:
-                app.events.put(("confirm", {"url": "nxm://cyberpunk2077/mods/9/files/8", "text": "Install?"}))
+            link = {"type": "nexus", "mod_id": 9, "file_id": 8}
+            with mock.patch.object(ui.messagebox, "askyesno", return_value=answer) as ask, \
+                    mock.patch.object(app.ctl, "add_link") as add:
+                app.events.put(("confirm", {"link": link, "text": "Install?"}))
                 app.root.after_cancel(app.tick)
                 app._drain()
-            self.assertEqual(add.call_count, int(answer))
+            self.assertEqual(ask.call_args.kwargs["default"], "no")
+            self.assertEqual(add.call_args_list, [mock.call(link)] * answer)
 
     def test_pipe_squatter_gets_nothing(self):
         """A program that holds the pipe name but does not know the token learns no link."""

@@ -16,8 +16,8 @@ ROOTS = {"archive", "bin", "engine", "r6", "red4ext", "mods"}
 CET_MODS = "bin/x64/plugins/cyber_engine_tweaks/mods"
 
 
-def extract(archive, dest):
-    """Unpack `archive` into the new folder `dest` with tar.exe.
+def extract(archive, dest, name):
+    """Unpack `archive` into the new folder `dest` with tar.exe. `name` is the mod's name for error messages.
     tar reads its command line in the ANSI code page, where "best-fit" turns some Unicode letters (a full-width
     quote, for one) into real quotes and splits the arguments. So no name reaches tar's command line: it reads
     the archive from standard input and unpacks into the fixed name of `dest`, with its parent as working folder
@@ -28,12 +28,12 @@ def extract(archive, dest):
             r = subprocess.run([str(TAR), "-xf", "-", "-C", dest.name], stdin=f, cwd=dest.parent, capture_output=True,
                                text=True, errors="replace", creationflags=NO_WINDOW, timeout=1800)
     except subprocess.TimeoutExpired:
-        raise RuntimeError(f"Unpacking {archive.name} took more than 30 minutes") from None
+        raise RuntimeError(f"Unpacking {name} took more than 30 minutes") from None
     if r.returncode:
         old_windows = sys.getwindowsversion().build < 22000 if hasattr(sys, "getwindowsversion") else False
         hint = (" The tar.exe in Windows 10 cannot open some .7z and .rar files: update to Windows 11, or unpack it "
-                "yourself, zip it, and add the .zip.") if old_windows and Path(archive).suffix.lower() in (".7z", ".rar") else ""
-        raise RuntimeError(f"Could not unpack {Path(archive).name}: {r.stderr.strip()[-300:]}{hint}")
+                "yourself, zip it, and add the .zip.") if old_windows and archive.suffix.lower() in (".7z", ".rar") else ""
+        raise RuntimeError(f"Could not unpack {name}: {r.stderr.strip()[-300:]}{hint}")
 
 
 def safe(name):
@@ -189,11 +189,11 @@ def install(archive, stage, name):
     with tempfile.TemporaryDirectory() as tmp:
         tree = Path(tmp) / "x"
         tree.mkdir()
-        extract(archive, tree)
+        extract(archive, tree, name)
         src = fomod_tree(tree, Path(tmp) / "fomod") or tree
         pairs = layout(src, name)
         if not pairs:
-            raise RuntimeError(f"{Path(archive).name} has no files the game can load")
+            raise RuntimeError(f"{name} has no files the game can load")
         shutil.rmtree(stage, ignore_errors=True)
         for f, rel in pairs:
             d = Path(stage) / rel

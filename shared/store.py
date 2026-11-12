@@ -6,9 +6,24 @@ import re
 import threading
 from pathlib import Path
 
+VERSION = "1.0.1"  # window title, MCP server and the Nexus Application-Version header
 DATA = Path(os.environ.get("CP2077MM_DATA") or Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "CP2077ModManager")
 GAME_EXE = "bin/x64/Cyberpunk2077.exe"
-DEFAULTS = {"game_dir": "", "api_key": "", "virus_scan": True, "auto_fix": True, "include_optional": True}
+DEFAULTS = {"game_dir": "", "api_key": "", "virus_scan": True, "auto_fix": True, "include_optional": True, "ai_model": "qwen3.5:4b"}
+
+
+def kind_of(m):
+    """A mod's file types for people: "Framework", or e.g. "Archive, Redscript"."""
+    if m.get("framework"):
+        return "Framework"
+    tags = []
+    for r in m["files"]:
+        r = r.lower()
+        tag = ("REDmod" if r.startswith("mods/") else "CET" if "cyber_engine_tweaks/mods/" in r else "RED4ext" if r.startswith("red4ext/")
+               else "Redscript" if r.endswith(".reds") else "Tweak" if r.startswith("r6/tweaks/") else "Archive" if r.startswith("archive/") else "Other")
+        if tag not in tags:
+            tags.append(tag)
+    return ", ".join([t for t in tags if t != "Other"][:3] or tags)
 
 
 class Store:

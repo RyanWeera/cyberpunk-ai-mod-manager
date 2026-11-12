@@ -25,6 +25,8 @@ dist/
 *.pem
 *.key
 *.p12
+state.json
+ipc.token
 *.pfx
 
 # Editors, OS and local tools

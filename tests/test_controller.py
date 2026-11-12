@@ -11,7 +11,7 @@ from unittest import mock
 from manager_ui import controller as ctl_mod
 from manager_ui.controller import Controller
 from shared.store import Store
-from tests.helpers import fake_game, make_zip
+from tests.helpers import fake_game, make_zip, mod
 
 
 def wait_idle(c, timeout=20):
@@ -65,15 +65,24 @@ class Pipeline(unittest.TestCase):
         self.assertTrue(inside.exists())
         self.assertEqual([p.name for p in self.store.downloads.iterdir()], ["b.zip"])  # job folders are cleaned up
 
+    def test_job_folders_left_by_a_cut_off_close_are_removed_at_start(self):
+        old = self.store.downloads / "job-old"
+        old.mkdir(parents=True)
+        (old / "archive.zip").write_text("x")
+        self.controller()
+        self.assertFalse(old.exists())
+
     def test_unrequested_nxm_link_asks_first(self):
-        with mock.patch.object(ctl_mod.nexus, "mod_info", lambda mid, key="": {"name": "Shady Mod"}):
+        with mock.patch.object(ctl_mod.nexus, "mod_info", lambda mid, key="": {"name": "Shady Mod"}), \
+                mock.patch.object(ctl_mod.nexus, "collection_info", lambda slug: {"name": "Night City Pack"}):
             c = self.controller()
-            c.handle_nxm("nxm://cyberpunk2077/mods/9/files/8?key=a&expires=1")
+            c.handle_nxm("nxm://cyberpunk2077/mods/9/files/8?key=a&expires=1&x= https://evil.example/p.zip")
             c.handle_nxm("nxm://cyberpunk2077/collections/abcd/revisions/1")
         self.assertEqual(c.jobs, [])  # nothing queued without the user's yes
-        asked = [p["text"] for k, p in list(self.events.queue) if k == "confirm"]
-        self.assertIn("Shady Mod", asked[0])
-        self.assertIn("collection", asked[1])
+        asked = [p for k, p in list(self.events.queue) if k == "confirm"]
+        self.assertIn("Shady Mod", asked[0]["text"])
+        self.assertEqual(asked[0]["link"]["type"], "nexus")  # the hidden second line is not part of what a yes adds
+        self.assertIn("collection 'Night City Pack'", asked[1]["text"])
 
     def test_free_account_waits_for_click_then_downloads(self):
         self.store.settings["api_key"] = "k"
@@ -141,9 +150,40 @@ class Pipeline(unittest.TestCase):
         c.apply(p, {"label": "Disable A", "action": ["disable", "a"]})
         c.apply(p, {"label": "Let A win", "action": ["prefer", "a", "b"]})
         self.assertEqual([(m["id"], m["enabled"]) for m in self.store.mods], [("b", True), ("a", False)])
+        self.assertEqual(self.store.doctor["ignored"], ["conflict-b-a"])  # Auto-sort keeps the user's winner
         c.undo(1)
         c.undo(0)
         self.assertEqual([(m["id"], m["enabled"]) for m in self.store.mods], [("a", True), ("b", True)])
+        self.assertEqual(self.store.doctor["ignored"], [])
+
+    def test_auto_sort_and_undo(self):
+        c = self.controller()
+        self.store.mods = [mod("a", []), mod("fw", [], framework="RED4ext")]
+        c.auto_sort()
+        self.assertEqual([m["id"] for m in self.store.mods], ["fw", "a"])
+        self.assertTrue(any(k == "problems" for k, _ in list(self.events.queue)))
+        c.auto_sort()  # already sorted: no second history entry
+        self.assertEqual(len(self.store.doctor["history"]), 1)
+        c.undo(0)
+        self.assertEqual([m["id"] for m in self.store.mods], ["a", "fw"])
+
+    def test_local_ai_advice_apply_and_undo(self):
+        c = self.controller()
+        self.store.mods = [mod("patch", [], name="A - Patch"), mod("a", [], name="A")]
+        advice = {"summary": "s", "fixes": [({"title": "t"}, {"label": "x", "action": ["ignore", "i"]}, "")] * 12, "after": [("a", "patch")]}
+        with mock.patch.object(ctl_mod.ollama, "start"), mock.patch.object(ctl_mod.ollama, "advise", return_value=advice):
+            c.ask_ai()
+        a = [p for k, p in list(self.events.queue) if k == "ai"][-1]
+        self.assertEqual((a["order"], a["moved"], len(a["fixes"])), (["a", "patch"], 1, 10))  # the window lists 10 fixes
+        c.apply_ai({**a, "fixes": [({"title": "t"}, {"label": "Turn A off", "action": ["disable", "a"]}, "why")]})
+        self.assertEqual([(m["id"], m["enabled"]) for m in self.store.mods], [("a", False), ("patch", True)])
+        self.assertEqual([h["fix"] for h in self.store.doctor["history"]], ["Sorted by the local AI (1 mod(s) changed place)", "Turn A off"])
+        c.undo(1)
+        c.undo(0)
+        self.assertEqual([(m["id"], m["enabled"]) for m in self.store.mods], [("patch", True), ("a", True)])
+        with mock.patch.object(ctl_mod.ollama, "start", side_effect=RuntimeError("Ollama did not start.")):
+            c.ask_ai()
+        self.assertEqual([p for k, p in list(self.events.queue) if k == "ai"][-1], {"error": "Ollama did not start."})
 
     def test_auto_fix_only_single_fix_problems_after_crash(self):
         c = self.controller()

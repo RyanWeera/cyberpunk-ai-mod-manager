@@ -1,5 +1,7 @@
 """The window. Tk runs on the main thread; Controller events arrive on a queue that _drain polls."""
+import json
 import os
+import sys
 import queue
 import threading
 import time
@@ -10,10 +12,10 @@ from multiprocessing.connection import answer_challenge, deliver_challenge
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from ai_link import tools
+from local_ai import ollama
 from manager_ui.controller import CORE, Controller
-from shared.store import Store, find_game
-
-VERSION = "1.0.1"
+from shared.store import DEFAULTS, VERSION, Store, find_game, kind_of
 BG, PANEL, PANEL2, FG, DIM, ACCENT = "#0e1016", "#181b24", "#232837", "#e8e8e8", "#8a8f9c", "#fcee0a"
 OK, BAD, WARN = "#3ddc84", "#ff6b6b", "#ffb347"
 KEY_PAGE = "https://next.nexusmods.com/settings/api-keys"
@@ -22,19 +24,6 @@ EXAMPLES = ("https://www.nexusmods.com/cyberpunk2077/mods/107\n"
             "https://github.com/psiberx/cp2077-codeware")
 LEVEL = {"high": "Serious", "medium": "Warning", "info": "Info"}
 ACTIVE = ("queued", "running", "waiting", "needkey")
-
-
-def kind_of(m):
-    if m.get("framework"):
-        return "Framework"
-    tags = []
-    for r in m["files"]:
-        r = r.lower()
-        tag = ("REDmod" if r.startswith("mods/") else "CET" if "cyber_engine_tweaks/mods/" in r else "RED4ext" if r.startswith("red4ext/")
-               else "Redscript" if r.endswith(".reds") else "Tweak" if r.startswith("r6/tweaks/") else "Archive" if r.startswith("archive/") else "Other")
-        if tag not in tags:
-            tags.append(tag)
-    return ", ".join([t for t in tags if t != "Other"][:3] or tags)
 
 
 class Tip:
@@ -89,7 +78,7 @@ class App:
         self.tabs = ttk.Notebook(root)
         self.tabs.pack(fill="both", expand=True, padx=12, pady=(8, 4))
         self.tab = {}
-        for name in ("Mods", "Add mods", "Downloads", "Crash doctor", "Settings"):
+        for name in ("Mods", "Add mods", "Find mod from video", "Downloads", "Crash doctor", "AI helpers", "Settings"):
             f = self.tab[name] = ttk.Frame(self.tabs, padding=12)
             self.tabs.add(f, text=name)
             getattr(self, "_tab_" + name.split()[0].lower())(f)
@@ -204,6 +193,9 @@ class App:
             ("Turn on / off", self.toggle, "Turn the selected mods on or off. Shortcut: Space, or click the On column."),
             ("Move up", lambda: self.move(-1), "Higher in the list = lower priority."),
             ("Move down", lambda: self.move(1), "Lower in the list wins when two mods change the same file."),
+            ("Auto-sort", self.auto_sort, "Put the mods in the best load order: frameworks first, each mod below the mods it "
+                                          "needs, small patches below the big mods they change. Then check for missing "
+                                          "mods. Undo it in the Crash doctor tab."),
             ("Update", self.update, "Download the newest version of the selected mods."),
             ("Remove", self.remove, "Remove the selected mods from the game and from this app. Shortcut: Delete."),
             ("Open folder", self.open_folder, "Show the files of the selected mod."),
@@ -262,6 +254,29 @@ class App:
                      "•  Nexus Premium: no clicks at all.  •  Every download is virus-scanned first (you can turn that off in Settings)."):
             ttk.Label(card, text=line, style="CardDim.TLabel", wraplength=self.px(1080), justify="left").pack(anchor="w", pady=1)
 
+    def _tab_find(self, f):
+        ttk.Label(f, text="Paste a video link", style="Section.TLabel").pack(anchor="w")
+        ttk.Label(f, style="Dim.TLabel", wraplength=self.px(1080), justify="left",
+                  text="YouTube works best: I read the mod links, the title and the chapters in the description. TikTok, "
+                       "Instagram and other sites give me only the caption. You can also paste a caption or a mod name."
+                  ).pack(anchor="w", pady=(2, 6))
+        row = ttk.Frame(f)
+        row.pack(fill="x")
+        self.video = tk.StringVar()
+        entry = ttk.Entry(row, textvariable=self.video)
+        entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        entry.bind("<Return>", lambda e: self.find_video())
+        self._buttons(row, [("▶ Find the mods", self.find_video, None)]).pack(side="left")
+        self.video_info = ttk.Label(f, style="Dim.TLabel", wraplength=self.px(1080), justify="left")
+        self.video_info.pack(anchor="w", pady=(10, 0))
+        self._buttons(f, [
+            ("▶ Add the selected mods", self.add_found, "Download and install the selected mods, like links in the Add mods tab."),
+            ("Open page", self.open_found, "Open the mod's page in your browser to check that it is the mod in the video. "
+                                           "Shortcut: double-click.")]).pack(side="bottom", anchor="w")
+        box, self.found = self._tree(f, ("Mod", "Found by", "Endorsements"), (460, 380, 120), 14, select="extended")
+        box.pack(fill="both", expand=True, pady=8)
+        self.found.bind("<Double-1>", lambda e: self.open_found())
+
     def _tab_downloads(self, f):
         self.dl_banner = ttk.Frame(f, style="Banner.TFrame", padding=(12, 8))
         self.dl_banner_text = ttk.Label(self.dl_banner, style="Banner.TLabel", wraplength=self.px(820), justify="left")
@@ -290,6 +305,8 @@ class App:
         self.bisect_state = ttk.Label(card, style="CardDim.TLabel")  # shown only while a search runs
         self._buttons(f, [
             ("▶ Check my mods now", lambda: self.ctl.bg(self.ctl.check_now), "Look for missing frameworks, mod errors in the game logs and conflicts."),
+            ("Ask the local AI", self.ask_ai, "The AI on this PC reads your load order and the problems, then suggests fixes "
+                                              "and mod moves. You see them before anything changes. Set it up in the AI helpers tab."),
             ("Find the bad mod for me", self.bisect_begin, "Turns half the mods off for each game start until the mod that crashes the game is found."),
             ("Stop the search", self.bisect_cancel, "Stop the bad-mod search and turn your mods back on.")]).pack(fill="x", pady=8)
         hist = ttk.Frame(f)  # packed at the bottom first, so the problem list cannot squeeze it out
@@ -317,6 +334,44 @@ class App:
         self.fix_btn = ttk.Button(right, text="▶ Apply this fix", style="Big.TButton", command=self.apply_fix)
         self.fix_btn.pack(anchor="w", pady=8)
         self.show_problem()
+
+    def _tab_ai(self, f):
+        wrap = self.px(1080)
+        ttk.Label(f, text="Local AI (free, runs on this PC)", style="Section.TLabel").pack(anchor="w")
+        ttk.Label(f, style="Dim.TLabel", wraplength=wrap, justify="left", text=(
+            "An open AI model runs on your PC with Ollama: free, no account, and offline once it is downloaded (about 3 GB). "
+            "'Ask the local AI' in the Crash doctor tab lets it read your load order and the problems I found, pick fixes, and "
+            "find patches that must load after the mod they change. You see every change first, and you can undo it. It is a "
+            "general AI model that gets this app's modding rules; it was not trained only for Cyberpunk. A graphics card with "
+            "6 GB or more makes it fast; it also runs on the processor, more slowly.")).pack(anchor="w", pady=(2, 8))
+        row = ttk.Frame(f)
+        row.pack(fill="x")
+        ttk.Label(row, text="Model").pack(side="left")
+        self.ai_model = tk.StringVar(value=self.store.settings["ai_model"])
+        e = ttk.Entry(row, textvariable=self.ai_model, width=24)
+        e.pack(side="left", padx=8)
+        e.bind("<FocusOut>", lambda _: self.save_ai_model())
+        self._buttons(row, [
+            ("▶ Download local AI", self.setup_ai, "Installs Ollama if it is not installed, starts it and downloads the model. "
+                                                  "Any Ollama model name works, e.g. qwen3.5:9b for a better but slower AI."),
+            ("Ask the local AI", self.ask_ai, "Same as the button in the Crash doctor tab.")]).pack(side="left")
+        self.ai_info = ttk.Label(f, style="Dim.TLabel", wraplength=wrap, justify="left",
+                                 text="Click 'Download local AI' to set it up. When it is set up already, this only checks it.")
+        self.ai_info.pack(anchor="w", pady=(8, 22))
+        ttk.Label(f, text="Claude and other AI apps", style="Section.TLabel").pack(anchor="w")
+        ttk.Label(f, style="Dim.TLabel", wraplength=wrap, justify="left", text=(
+            "Give a mod link or a video link to Claude and ask it to set the mods up: it adds them here, sorts the load order "
+            "and checks for problems. This works in AI apps that support MCP, such as Claude Desktop, Claude Code and Cursor. "
+            "The AI uses this window, so you see what it does. AI apps add only Nexus Mods links and the core frameworks: "
+            "paste other links in the Add mods tab yourself. With a free Nexus account you still click 'Slow download' for "
+            "each Nexus file.")).pack(anchor="w", pady=(2, 8))
+        self._buttons(f, [("Copy setup for Claude Desktop", lambda: self.copy_setup(True), "Copies the MCP setup text for Claude Desktop and similar apps."),
+                          ("Copy setup for Claude Code", lambda: self.copy_setup(False), "Copies the command that adds this app to Claude Code.")]).pack(anchor="w")
+        ttk.Label(f, style="Dim.TLabel", wraplength=wrap, justify="left", text=(
+            "Claude Desktop: open Settings > Developer > Edit Config, paste the text into claude_desktop_config.json (if the file "
+            "already has \"mcpServers\", add only the cp2077-ai-mod-manager part), save, and restart Claude. Other apps: paste it "
+            "where the app adds MCP servers.\nClaude Code: paste the command in a terminal.\nIf you move this app, copy the setup "
+            "again.")).pack(anchor="w", pady=(8, 0))
 
     def _tab_settings(self, f):
         st = self.store.settings
@@ -363,7 +418,7 @@ class App:
         foot = ttk.Frame(f)
         foot.grid(row=12, column=0, columnspan=3, sticky="we", pady=(22, 0))
         ttk.Button(foot, text="Open data folder", command=lambda: os.startfile(self.store.root)).pack(side="right")
-        ttk.Label(foot, style="Dim.TLabel", text=f"Mods, downloads and backups are kept in {self.store.root}").pack(side="left", fill="x")
+        ttk.Label(foot, style="Dim.TLabel", text=f"Mods, backups and settings are kept in {self.store.root}").pack(side="left", fill="x")
         self.refresh_settings()
 
     # ---------- helpers ----------
@@ -452,6 +507,10 @@ class App:
             self.ctl.move(ids[0], d)
             self.redeploy()
 
+    def auto_sort(self):
+        self.say("Finding the best load order…")
+        self.ctl.bg(self.ctl.auto_sort)  # reads every archive: not on the window thread
+
     def update(self):
         for mid in self._selected(self.mods):
             self.ctl.bg(self.ctl.update_mod, mid)
@@ -521,6 +580,87 @@ class App:
         if files:
             self.say(f"Installing {len(files)} file(s)…")
             self.tabs.select(self.tab["Downloads"])
+
+    def find_video(self):
+        entry = self.video.get().strip()
+        if not entry:
+            return self.say("Paste a video link first.")
+        self.video_info.configure(text="Reading the video page…", foreground=DIM)
+        self.ctl.bg(self.ctl.find_in_video, entry)
+
+    def show_found(self, p):
+        self.found.delete(*self.found.get_children())
+        if "error" in p:
+            return self.video_info.configure(text=f"I could not read that page: {p['error']}", foreground=BAD)
+        rows = p["rows"]
+        for r in rows:
+            self.found.insert("", "end", iid=r["url"], values=(r["name"], r["why"], r["endorsements"] or ""))
+        n, linked = len(rows), sum(r["why"] == "Linked in the video" for r in rows)
+        text = ("I found no mod. If you know the mod's name, paste the name." if not n else
+                f"{n} mod(s) linked in the video." if linked == n else
+                f"{n} mod(s): {linked} linked in the video, {n - linked} found by name. Open a page to check a mod before you add it.")
+        self.video_info.configure(text=(f'"{p["title"]}"   ' if p["title"] else "") + text, foreground=FG if n else WARN)
+
+    def add_found(self):
+        urls = self._selected(self.found)
+        if not urls:
+            return self.say("Select one or more mods in the list first.")
+        self.ctl.add_links("\n".join(urls))
+        self.say(f"Added {len(urls)} mod(s). Follow them in the Downloads tab.")
+        self.tabs.select(self.tab["Downloads"])
+
+    def open_found(self):
+        if self.found.focus():
+            webbrowser.open(self.found.focus())
+
+    def save_ai_model(self):
+        model = self.ai_model.get().strip() or DEFAULTS["ai_model"]
+        self.ai_model.set(model)
+        if self.store.settings.get("ai_model") != model:  # a save waits while a deploy holds the store
+            self.store.settings["ai_model"] = model
+            self.store.save()
+        return model
+
+    def setup_ai(self):
+        model = self.save_ai_model()
+        if not ollama.exe() and not messagebox.askyesno("Local AI", (
+                "I install Ollama, the free program that runs AI models on your PC (MIT license), with Windows' winget "
+                f"installer, and accept its license for you. Then I download {model} (a few GB).\n\nGo on?")):
+            return
+        self.ai_info.configure(text="Setting up the local AI…", foreground=DIM)
+        self.ctl.bg(self.ctl.setup_ai, model)
+
+    def ask_ai(self):
+        self.save_ai_model()  # a click on a button does not take the focus from the model box, so save it here
+        self.say("The local AI is reading your mods and problems… The first answer can take a minute.")
+        self.ctl.bg(self.ctl.ask_ai)
+
+    def show_ai(self, p):
+        if "error" in p:
+            self.say("The local AI could not help.")
+            return messagebox.showerror("Local AI", p["error"])
+        text = (p["summary"] or "The local AI gave no summary.")[:900]
+        if p["order"]:
+            text += f"\n\nLoad order: {p['moved']} mod(s) change place."
+        if p["fixes"]:
+            text += "\n\nFixes:\n" + "\n".join(f"•  {pr['title']}  →  {f['label']}" + (f"\n    {why[:200]}" if why else "")
+                                               for pr, f, why in p["fixes"])
+        if not (p["order"] or p["fixes"]):
+            self.say("The local AI found nothing to change.")
+            return messagebox.showinfo("Local AI", text + "\n\nThe local AI found nothing to change.")
+        if messagebox.askyesno("Local AI", text + "\n\nMake these changes? You can undo each one in the Crash doctor tab."):
+            self.ctl.bg(self.ctl.apply_ai, p)
+            self.say("Done. You can undo each change in the Crash doctor tab.")
+
+    def copy_setup(self, desktop):
+        """The MCP setup that starts this app as `--mcp` (the exe, or python with app.py when run from source)."""
+        cmd = ([sys.executable] if getattr(sys, "frozen", False) else
+               [sys.executable, str(Path(__file__).resolve().parents[1] / "app.py")]) + ["--mcp"]
+        text = (json.dumps({"mcpServers": {"cp2077-ai-mod-manager": {"command": cmd[0], "args": cmd[1:]}}}, indent=2) if desktop else
+                "claude mcp add --scope user cp2077-ai-mod-manager -- " + " ".join(f'"{c}"' for c in cmd))  # quoted: Git Bash drops the backslashes of an unquoted path
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.say("Copied. Paste it as the text in the AI helpers tab says.")
 
     def _job_do(self, fn):
         ids = self._selected(self.jobs)
@@ -800,15 +940,21 @@ class App:
                     self.refresh_bisect()
                 elif kind == "problems":
                     self.show_problems(p)
+                elif kind == "video":
+                    self.show_found(p)
+                elif kind == "ai_status":
+                    self.ai_info.configure(text=p, foreground=OK if p.startswith("✔") else BAD if p.startswith("✖") else DIM)
+                elif kind == "ai":
+                    self.show_ai(p)
                 elif kind == "show":
                     self.root.deiconify()
                     self.root.lift()
                 elif kind == "confirm":  # a Nexus link this app did not ask for: it may come from any web page
                     self.root.deiconify()
                     self.root.lift()
-                    if messagebox.askyesno("Nexus download", p["text"] + "\n\nSay yes only if you clicked this download "
-                                                                        "yourself on Nexus Mods."):
-                        self.ctl.add_links(p["url"])
+                    if messagebox.askyesno("Nexus download", " ".join(p["text"].split())[:300] + "\n\nSay yes only if you clicked this download "
+                                                                        "yourself on Nexus Mods.", default=messagebox.NO):
+                        self.ctl.add_link(p["link"])
                         self.tabs.select(self.tab["Downloads"])
         except queue.Empty:
             pass
@@ -833,22 +979,32 @@ class App:
         if not self.handshakes.acquire(blocking=False):
             conn.close()
             return
-        cut = threading.Timer(self.handshake_timeout, conn.close)
+        once = threading.Lock()
+
+        def close():  # the timer and this thread can both get here; a second CloseHandle could hit a reused handle
+            if once.acquire(blocking=False):
+                conn.close()
+
+        cut = threading.Timer(self.handshake_timeout, close)
         cut.start()
         try:
-            with conn:
-                if self.ctl.stop.is_set():
-                    return  # closing: refuse, so the sender keeps its link and opens the next window when this one is gone
-                deliver_challenge(conn, self.token)
-                answer_challenge(conn, self.token)
-                msg = conn.recv_bytes(4096).decode("utf-8", "replace").strip()
-                if self.ctl.stop.is_set():
-                    return  # closing began meanwhile: no "ok", so the sender keeps the link
-                conn.send_bytes(b"ok")  # the sender counts the link as delivered only after this
+            if self.ctl.stop.is_set():
+                return  # closing: refuse, so the sender keeps its link and opens the next window when this one is gone
+            deliver_challenge(conn, self.token)
+            answer_challenge(conn, self.token)
+            msg = conn.recv_bytes(1 << 20).decode("utf-8", "replace").strip()
+            if self.ctl.stop.is_set():
+                return  # closing began meanwhile: no "ok", so the sender keeps the link
+            if msg.startswith("{"):  # a tool call from an AI app (ai_link/mcp.py); nxm hand-overs never start with "{"
+                cut.cancel()  # the caller proved the token; its tool may take longer than a handshake
+                conn.send_bytes(json.dumps(tools.run(self.ctl, msg)).encode())
+                return
+            conn.send_bytes(b"ok")  # the sender counts the link as delivered only after this
         except (AuthenticationError, OSError, EOFError, TypeError):  # TypeError: the connection was cut mid-read
             return
         finally:
             cut.cancel()
+            close()
             self.handshakes.release()
         if msg.lower().startswith("nxm://"):
             self.ctl.bg(self.ctl.handle_nxm, msg)

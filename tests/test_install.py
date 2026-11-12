@@ -144,8 +144,14 @@ class Install(unittest.TestCase):
         self.assertEqual([rel for _, rel in layout(tree, "M")], ["archive/pc/mod/ok.archive"])
 
     def test_nothing_usable(self):
-        with self.assertRaises(RuntimeError):
+        with self.assertRaisesRegex(RuntimeError, "^My Mod has no files"):  # errors name the mod, not the temp file
             self.run_install({"readme.txt": "x"})
+
+    def test_broken_archive_names_the_mod(self):
+        bad = self.tmp / "bad.zip"
+        bad.write_bytes(b"not a zip")
+        with self.assertRaisesRegex(RuntimeError, "^Could not unpack Broken Mod"):
+            install(bad, self.tmp / "stage", "Broken Mod")
 
     def test_needs(self):
         self.assertEqual(needs_for(["red4ext/plugins/X/x.dll", "red4ext/plugins/X/Scripts/a.reds", "archive/pc/mod/a.xl",

@@ -1,4 +1,5 @@
 """Start-up hand-over in app.main, on a private test pipe; the window itself is replaced by a stub."""
+import json
 import sys
 import tempfile
 import threading
@@ -43,6 +44,32 @@ class StartUp(unittest.TestCase):
                     return
 
         threading.Thread(target=serve, daemon=True).start()
+
+    def test_ai_tool_call_goes_to_the_window(self):
+        ls = Listener(self.pipe, family="AF_PIPE", authkey=b"secret")
+        self.addCleanup(ls.close)
+        got = []
+
+        def serve():
+            for reply in ({"text": "3 mods"}, {"error": "busy"}):
+                with ls.accept() as c:
+                    got.append(json.loads(c.recv_bytes()))
+                    c.send_bytes(json.dumps(reply).encode())
+
+        threading.Thread(target=serve, daemon=True).start()
+        with mock.patch.object(app.subprocess, "Popen") as popen:  # a slow test thread must not start a real window
+            self.assertEqual(app.ask_window("status", {}), "3 mods")
+            with self.assertRaisesRegex(RuntimeError, "^busy$"):
+                app.ask_window("sort_load_order", {})
+        popen.assert_not_called()
+        self.assertEqual(got, [{"tool": "status", "args": {}}, {"tool": "sort_load_order", "args": {}}])
+
+    def test_ai_tool_call_starts_the_window_once(self):
+        with mock.patch.object(app.subprocess, "Popen") as popen:
+            with self.assertRaisesRegex(RuntimeError, "did not start"):
+                app.ask_window("status", {}, wait=1.2)
+        popen.assert_called_once()  # tried again until the deadline, but started only one copy
+        self.assertEqual(popen.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"], "1")
 
     def test_running_window_takes_the_link(self):
         got = []
