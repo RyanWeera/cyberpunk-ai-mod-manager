@@ -32,6 +32,13 @@ class Pipeline(unittest.TestCase):
         self.store = Store(self.tmp / "data")
         self.store.settings.update(game_dir=str(self.game), virus_scan=False)
         self.events = queue.Queue()
+        for name in ("block", "stop"):  # no test may leave the real local AI blocked or start its 2-minute timer
+            patcher = mock.patch.object(ctl_mod.llm, name)
+            self.addCleanup(patcher.stop)
+            setattr(self, name, patcher.start())
+        timer = mock.patch.object(ctl_mod.threading, "Timer")
+        self.addCleanup(timer.stop)
+        self.timer = timer.start()
 
     def controller(self):
         return Controller(self.store, lambda k, p=None: self.events.put((k, p)), workers=2, watch_game=False)
@@ -156,6 +163,77 @@ class Pipeline(unittest.TestCase):
         self.assertEqual([(m["id"], m["enabled"]) for m in self.store.mods], [("a", True), ("b", True)])
         self.assertEqual(self.store.doctor["ignored"], [])
 
+    def test_file_stopped_by_defender_is_shown_as_a_virus(self):
+        errors = {"Bad": OSError(22, "Invalid argument", "C:/Users/me/x.zip", 225),  # what real-time protection gives
+                  "Bad2": OSError(22, "Invalid argument", "C:/Users/me/y.zip")}  # what Python's open() gives for it
+
+        def install(path, new, name):
+            raise errors[name]
+        with mock.patch.object(ctl_mod.install, "install", install):
+            c = self.controller()
+            c.add_links("\n".join(str(make_zip(self.tmp / f"{n}.zip", {"archive/pc/mod/a.archive": "x"})) for n in errors))
+            wait_idle(c)
+        status = {j["name"]: j["status"] for j in c.jobs if j["state"] == "failed"}
+        self.assertEqual(status["Bad"], "Blocked: virus found (Microsoft Defender stopped the file)")
+        self.assertTrue(status["Bad2"].startswith("Blocked: Windows refused to read the file"), status)
+
+    def test_mod_packs_save_use_merge_and_launch(self):
+        c = self.controller()
+        self.store.mods = [mod("fw", [], framework="RED4ext"), mod("a", []), mod("b", [], enabled=False), mod("c", [])]
+        c.save_pack("One")  # fw, a, c on
+        self.store.mods = [mod("fw", [], framework="RED4ext"), mod("c", []), mod("b", []), mod("a", [], enabled=False),
+                           mod("d", [])]
+        c.save_pack("Two")
+        self.store.packs["One"].append(["gone", True])  # a mod removed since
+        self.assertIn("1 not installed yet", c.use_pack("One"))
+        self.assertEqual([(m["id"], m["enabled"]) for m in self.store.mods],
+                         [("d", False), ("fw", True), ("a", True), ("b", False), ("c", True)])  # outside the pack: first, off
+        self.store.packs["Coll"] = [["b", True], ["a", True]]  # a collection pack lists no frameworks: they stay on
+        c.use_pack("Coll")
+        self.assertEqual([m["id"] for m in self.store.enabled()], ["fw", "b", "a"])
+        self.assertEqual(self.store.pack, "Coll")
+        self.assertEqual(c.merge_packs(["Two", "Coll"], " Big "), 5)
+        self.assertEqual(self.store.packs["Big"], [["fw", True], ["c", True], ["d", True], ["b", True], ["a", True]])
+        with self.assertRaises(ValueError):
+            c.merge_packs(["Two"], "Small")
+        with mock.patch.object(ctl_mod.subprocess, "Popen") as popen:
+            c.launch("Two")
+        popen.assert_called_once()
+        self.block.assert_called_once_with()  # the local AI stays off while the game runs
+        self.timer.assert_called_once()
+        self.assertEqual([m["id"] for m in self.store.enabled()], ["fw", "c", "b", "d"])
+        self.assertEqual(Store(self.store.root).packs["Big"][0], ["fw", True])  # kept in state.json
+        c.delete_pack("Two")
+        self.assertEqual((list(self.store.packs), self.store.pack), (["One", "Coll", "Big"], ""))
+
+    def test_a_collection_is_also_a_mod_pack(self):
+        files = [{"mod_id": 5, "file_id": 50, "optional": False, "name": "Car", "version": "1"},
+                 {"mod_id": 2380, "file_id": 9, "optional": False, "name": "RED4ext", "version": "1"}]
+        c = self.controller()
+        with mock.patch.object(ctl_mod.nexus, "collection", lambda *a: {"name": "My Pack ", "revision": 3, "files": files}), \
+                mock.patch.object(c, "_job"), mock.patch.object(c, "add_framework"):
+            c._add({"type": "collection", "slug": "abc"})
+        self.assertEqual(self.store.packs, {"My Pack": [["nexus-5-50", True]]})
+
+    def test_launch_asks_windows_when_the_game_runs_as_admin(self):
+        c = self.controller()
+        exe, cwd = str(self.game / "bin/x64/Cyberpunk2077.exe"), str(self.game / "bin/x64")
+        with mock.patch.object(ctl_mod.subprocess, "Popen", side_effect=OSError(None, "elevation", None, 740)), \
+                mock.patch.object(ctl_mod.os, "startfile", create=True) as start:
+            c.launch()
+        start.assert_called_once_with(exe, arguments="", cwd=cwd)
+        with mock.patch.object(ctl_mod.subprocess, "Popen", side_effect=OSError(None, "other", None, 2)), \
+                mock.patch.object(ctl_mod.os, "startfile", create=True) as start, self.assertRaises(OSError):
+            c.launch()
+        start.assert_not_called()
+        self.assertEqual(self.block.call_args_list[-2:], [mock.call(), mock.call(False)])  # no game: the AI may start again
+        self.store.deployed["bin/x64/cyberpunk2077.exe"] = "m"  # a mod replaced the game exe: never elevate it
+        with mock.patch.object(ctl_mod.subprocess, "Popen", side_effect=OSError(None, "elevation", None, 740)), \
+                mock.patch.object(ctl_mod.deploy, "deploy"), \
+                mock.patch.object(ctl_mod.os, "startfile", create=True) as start, self.assertRaises(OSError):
+            c.launch()
+        start.assert_not_called()
+
     def test_auto_sort_and_undo(self):
         c = self.controller()
         self.store.mods = [mod("a", []), mod("fw", [], framework="RED4ext")]
@@ -171,7 +249,7 @@ class Pipeline(unittest.TestCase):
         c = self.controller()
         self.store.mods = [mod("patch", [], name="A - Patch"), mod("a", [], name="A")]
         advice = {"summary": "s", "fixes": [({"title": "t"}, {"label": "x", "action": ["ignore", "i"]}, "")] * 12, "after": [("a", "patch")]}
-        with mock.patch.object(ctl_mod.ollama, "start"), mock.patch.object(ctl_mod.ollama, "advise", return_value=advice):
+        with mock.patch.object(ctl_mod.llm, "start"), mock.patch.object(ctl_mod.llm, "advise", return_value=advice):
             c.ask_ai()
         a = [p for k, p in list(self.events.queue) if k == "ai"][-1]
         self.assertEqual((a["order"], a["moved"], len(a["fixes"])), (["a", "patch"], 1, 10))  # the window lists 10 fixes
@@ -181,9 +259,52 @@ class Pipeline(unittest.TestCase):
         c.undo(1)
         c.undo(0)
         self.assertEqual([(m["id"], m["enabled"]) for m in self.store.mods], [("patch", True), ("a", True)])
-        with mock.patch.object(ctl_mod.ollama, "start", side_effect=RuntimeError("Ollama did not start.")):
+        with mock.patch.object(ctl_mod.llm, "start", side_effect=RuntimeError("The local AI did not start.")):
             c.ask_ai()
-        self.assertEqual([p for k, p in list(self.events.queue) if k == "ai"][-1], {"error": "Ollama did not start."})
+        self.assertEqual([p for k, p in list(self.events.queue) if k == "ai"][-1], {"error": "The local AI did not start."})
+
+    def test_the_local_ai_stops_while_the_game_runs(self):
+        c = self.controller()
+        with mock.patch.object(ctl_mod.llm, "block") as block:
+            c._game_started(0)
+        block.assert_called_once_with()
+        with mock.patch.object(ctl_mod.llm, "start") as start:
+            c.ask_ai("my car is missing")
+            c.setup_ai()
+        start.assert_not_called()
+        self.assertEqual([p for k, p in list(self.events.queue) if k == "ai"][-1], {"error": ctl_mod.GAME_ON})
+        with mock.patch.object(ctl_mod.watch, "crash_evidence", return_value={"crashed": False}),                 mock.patch.object(ctl_mod.llm, "block") as block:
+            c._game_exited(0)
+        self.assertFalse(c.game_on)
+        block.assert_called_once_with(False)  # the AI may start again
+        with mock.patch.object(self.store, "save", side_effect=OSError("disk full")):
+            c._game_started(1)  # no error: else the game watch would skip the exit and the AI would stay off
+        self.assertTrue(c.game_on)
+        self.block.reset_mock()
+        with mock.patch.object(ctl_mod.subprocess, "Popen", side_effect=OSError(None, "other", None, 2)), \
+                self.assertRaises(OSError):
+            c.launch()  # a second launch fails while the game runs
+        self.block.assert_called_once_with()  # the AI stays off
+
+    def test_bug_report_fixes_become_changes_the_user_can_apply(self):
+        c = self.controller()
+        car, b, w = mod("car", [], name="Car", enabled=False), mod("b", [], name="B"), mod("w", [], name="W", source={"type": "nexus", "mod_id": 9, "file_id": 90})
+        self.store.mods = [car, b, w]
+        advice = {"summary": "s", "fixes": [], "after": [], "cause": "c", "mod_fixes": [
+            (car, "turn_on", "off"), (b, "turn_on", "already on"), (car, "load_last", "wins"),
+            (w, "update", "old"), (w, "load_last", "already last")]}
+        with mock.patch.object(ctl_mod.llm, "start"), mock.patch.object(ctl_mod.llm, "advise", return_value=advice) as adv:
+            c.ask_ai("  my car is missing ")
+        self.assertEqual(adv.call_args.args[2], "my car is missing")
+        a = [p for k, p in list(self.events.queue) if k == "ai"][-1]
+        self.assertNotIn("error", a, a)
+        self.assertNotIn("mod_fixes", a)
+        self.assertEqual([(p["title"], f["label"]) for p, f, _ in a["fixes"]], [
+            ("Your bug report", "Turn on Car"), ("Your bug report", "Load Car last, so it wins"),
+            ("Your bug report", "Update W to its newest version"), ("Your bug report", "Load W last, so it wins")])
+        with mock.patch.object(c, "bg"):  # the update runs in the background: not here
+            c.apply_ai(a)
+        self.assertEqual([(m["id"], m["enabled"]) for m in self.store.mods], [("b", True), ("car", True), ("w", True)])
 
     def test_auto_fix_only_single_fix_problems_after_crash(self):
         c = self.controller()

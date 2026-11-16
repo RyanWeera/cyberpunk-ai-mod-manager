@@ -143,6 +143,15 @@ class Install(unittest.TestCase):
             self.skipTest("this Windows account cannot create symlinks")
         self.assertEqual([rel for _, rel in layout(tree, "M")], ["archive/pc/mod/ok.archive"])
 
+    def test_archive_inside_an_archive(self):
+        one = make_zip(self.tmp / "inner.zip", {"archive/pc/mod/in.archive": b"x"}).read_bytes()
+        self.assertEqual(self.run_install({"Main/inner.zip": one}), ["archive/pc/mod/in.archive"])
+        with self.assertRaisesRegex(RuntimeError, r"holds 2 other archives \(a.zip, b.zip\)"):
+            self.run_install({"b.zip": one, "a.zip": one}, archive="two.zip")
+        empty = make_zip(self.tmp / "empty.zip", {"readme.txt": b"x"}).read_bytes()
+        with self.assertRaisesRegex(RuntimeError, r"no files the game can load, and neither has the archive inside it \(e.zip\)$"):
+            self.run_install({"e.zip": empty}, archive="one.zip")
+
     def test_nothing_usable(self):
         with self.assertRaisesRegex(RuntimeError, "^My Mod has no files"):  # errors name the mod, not the temp file
             self.run_install({"readme.txt": "x"})

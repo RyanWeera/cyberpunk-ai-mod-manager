@@ -167,11 +167,12 @@ def archive_hashes(path):
 
 
 def overlaps(store):
-    """(sizes, pairs): how many archive resources each enabled mod changes, and how many resources each
-    pair of mods (lower, higher in the list) both change."""
+    """(sizes, pairs): how many archive resources and loose game files each enabled mod changes, and how many
+    of them each pair of mods (lower, higher in the list) both change."""
     owners, sizes = {}, {}
     for m in store.enabled():
         res = set().union(*(archive_hashes(store.staging / m["id"] / r) for r in m["files"] if r.lower().endswith(".archive")))
+        res |= {"file:" + r.lower() for r in m["files"] if not r.lower().endswith(".archive")}  # only one copy can be in the game
         sizes[m["id"]] = len(res)
         for h in res:
             owners.setdefault(h, []).append(m["id"])

@@ -112,6 +112,14 @@ class Doctor(unittest.TestCase):
         s.doctor["ignored"] = ["conflict-x-y"]
         self.assertEqual(doctor.archive_conflicts(s), [])
 
+    def test_loose_files_two_mods_replace_are_a_conflict_too(self):
+        s = Store(Path(tempfile.mkdtemp()))
+        s.mods = [mod("car", ["r6/scripts/car.reds", "r6/tweaks/car.yaml"], name="Car"),
+                  mod("car2", ["R6/Scripts/car.reds", "r6/tweaks/car.yaml"], name="Car v2"), mod("x", ["r6/scripts/x.reds"])]
+        [p] = doctor.archive_conflicts(s)
+        self.assertEqual((p["id"], p["title"]), ("conflict-car-car2", "Car and Car v2 change the same 2 game file(s)"))
+        self.assertEqual(p["fixes"][1]["action"], ["prefer", "car", "car2"])  # the user picks which one wins
+
     def test_best_order(self):
         s = Store(Path(tempfile.mkdtemp()))
         for mid, hashes, kw in [

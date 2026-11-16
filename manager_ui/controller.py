@@ -1,6 +1,8 @@
 """Everything the window does, without Tk: links -> jobs -> download -> virus scan -> install -> deploy,
 plus game launch, crash handling, fixes and undo. Worker threads report through notify(kind, payload)."""
+import errno
 import itertools
+import os
 import queue
 import re
 import shutil
@@ -15,12 +17,13 @@ from crash_doctor import doctor, watch
 from downloads import nexus
 from downloads.fetch import FRAMEWORKS, FW_BY_NEXUS, FW_BY_REPO, download, github_latest
 from installer import deploy, install
-from local_ai import ollama
+from local_ai import llm
 from shared.store import GAME_EXE
 from video_finder import finder
 from virus_scan import scan
 
 CORE = ["RED4ext", "Cyber Engine Tweaks", "redscript", "ArchiveXL", "TweakXL", "Codeware"]
+GAME_ON = llm.BLOCKED
 
 
 class Controller:
@@ -28,6 +31,7 @@ class Controller:
         self.store, self.notify = store, notify
         self.jobs, self.lock, self.work, self.ids = [], threading.RLock(), queue.Queue(), itertools.count(1)
         self.premium, self.clicking, self.stop = False, None, threading.Event()
+        self.game_on = False  # the local AI does not run while the game runs: the game gets the whole PC
         for old in store.downloads.glob("job-*"):  # left by jobs that the app's close cut off (only one window runs)
             shutil.rmtree(old, ignore_errors=True)
         for _ in range(workers):
@@ -105,6 +109,11 @@ class Controller:
             c = nexus.collection(link["slug"], link.get("revision"), self.key)
             files = [f for f in c["files"] if self.store.settings["include_optional"] or not f["optional"]]
             self.notify("log", f"Collection '{c['name']}' revision {c['revision']}: {len(files)} files")
+            with self.store.lock:  # the collection is also a mod pack (a mod's id is known before its download)
+                self.store.packs[c["name"].strip()] = [[f"nexus-{f['mod_id']}-{f['file_id']}", True] for f in files
+                                                       if f["mod_id"] not in FW_BY_NEXUS]
+                self.store.save()
+            self.notify("mods", None)
             for f in files:
                 self._add({"type": "nexus", **f})
         elif t == "nexus":
@@ -223,7 +232,11 @@ class Controller:
                 self._run(j)
             except Exception as e:  # noqa: BLE001 - job boundary: mark failed, keep the worker alive
                 j["state"] = "failed"
-                self._set(j, f"Failed: {e}")
+                virus = getattr(e, "winerror", None) in (225, 226)  # real-time protection stopped or removed the file
+                refused = isinstance(e, OSError) and e.errno == errno.EINVAL and e.filename  # Python's open() shows a block so
+                self._set(j, "Blocked: virus found (Microsoft Defender stopped the file)" if virus else
+                          "Blocked: Windows refused to read the file. An antivirus may have stopped it: see Windows Security > "
+                          "Protection history" if refused else f"Failed: {e}")
             self._after_job()
             self.work.task_done()
 
@@ -348,6 +361,62 @@ class Controller:
             self.store.save()
         self.notify("mods", None)
 
+    # ---------- mod packs ----------
+    def save_pack(self, name):
+        """Keep the mod list as it is now (which mods are on, and their order) as the mod pack `name`."""
+        name = name.strip()
+        if not name:
+            raise ValueError("Give the mod pack a name.")
+        with self.store.lock:
+            self.store.packs[name] = [[m["id"], m["enabled"]] for m in self.store.mods]
+            self.store.pack = name
+            self.store.save()
+        self.notify("mods", None)
+
+    def use_pack(self, name):
+        """Turn on the pack's mods in the pack's order and turn off the rest. A framework the pack does not
+        list stays on: the pack's mods need it."""
+        with self.store.lock:
+            pack = self.store.packs[name]
+            pos, on = {mid: n for n, (mid, _) in enumerate(pack)}, {mid for mid, e in pack if e}
+            self.store.mods.sort(key=lambda m: pos.get(m["id"], -1))  # mods outside the pack go first (lowest)
+            for m in self.store.mods:
+                m["enabled"] = m["id"] in on if m["id"] in pos else bool(m.get("framework")) and m["enabled"]
+            self.store.pack = name
+            self.store.save()
+            missing = len(pos.keys() - {m["id"] for m in self.store.mods})
+        self.notify("mods", None)
+        msg = f"Mod pack '{name}': {len(self.store.enabled())} mod(s) on" + (f", {missing} not installed yet." if missing else ".")
+        self.notify("log", msg)
+        return msg
+
+    def merge_packs(self, names, new):
+        """One pack with every mod of `names`. A mod in several packs is on if one of them turns it on, and takes
+        its place from the last pack, so a later pack wins when two mods change the same file."""
+        new = new.strip()
+        if len(names) < 2 or not new:
+            raise ValueError("Pick two or more mod packs and give the new pack a name.")
+        with self.store.lock:
+            order, on = {}, set()
+            for n in names:
+                for mid, e in self.store.packs[n]:
+                    order.pop(mid, None)
+                    order[mid] = None
+                    if e:
+                        on.add(mid)
+            self.store.packs[new] = [[mid, mid in on] for mid in order]
+            self.store.save()
+        self.notify("mods", None)
+        return len(order)
+
+    def delete_pack(self, name):
+        with self.store.lock:
+            self.store.packs.pop(name, None)
+            if self.store.pack == name:
+                self.store.pack = ""
+            self.store.save()
+        self.notify("mods", None)
+
     def remove(self, mid):
         with self.store.lock:
             self.store.mods = [m for m in self.store.mods if m["id"] != mid]
@@ -382,24 +451,51 @@ class Controller:
         return False
 
     # ---------- game and crashes ----------
-    def launch(self):
+    def launch(self, pack=None):
+        """Start the game with the mods that are on, or first set the mod list to the mod pack `pack`."""
         game = self.store.game()
         if not game:
             raise RuntimeError("Set the Cyberpunk 2077 folder in Settings first.")
         with self.store.lock:
             if self.stop.is_set():  # the window is closing
                 return
+            if pack:
+                self.use_pack(pack)
             deploy.deploy(self.store)
         redmod = any(r.lower().startswith("mods/") for m in self.store.enabled() for r in m["files"])
-        subprocess.Popen([str(game / GAME_EXE)] + (["-modded"] if redmod else []), cwd=str(game / "bin/x64"))
+        exe, args, cwd = str(game / GAME_EXE), ["-modded"] if redmod else [], str(game / "bin/x64")
+        llm.block()  # free the local AI's memory before the game loads, and keep it off while the game runs
+        try:
+            try:
+                subprocess.Popen([exe] + args, cwd=cwd)
+            except OSError as e:
+                if getattr(e, "winerror", None) != 740 or GAME_EXE.lower() in self.store.deployed:
+                    raise  # never elevate an exe that a mod put there
+                os.startfile(exe, arguments=" ".join(args), cwd=cwd)  # "Run as administrator" is set: Windows asks the user first
+        except OSError:
+            if not (self.game_on or self.stop.is_set()):  # no game started, and the window is not closing
+                llm.block(False)
+            raise
+        # The game watch sees the game within seconds; a game that never showed up must not keep the AI off.
+        t = threading.Timer(120, lambda: self.game_on or self.stop.is_set() or llm.block(False))
+        t.daemon = True
+        t.start()
 
     def _game_started(self, t):
+        self.game_on = True  # also when the game starts from Steam or GOG
+        llm.block()
+        self.notify("game", True)
         with self.store.lock:
             self.store.doctor["last_launch"] = t
-            self.store.save()
-        self.notify("game", True)
+            try:
+                self.store.save()
+            except OSError as e:  # an error here would make the game watch skip this game's exit: the AI would stay off
+                self.notify("log", f"Could not save the launch time: {e}")
 
     def _game_exited(self, started, exit_code=None):
+        self.game_on = False
+        if not self.stop.is_set():  # the window is not closing
+            llm.block(False)
         self.notify("game", False)
         ev = watch.crash_evidence(started, exit_code)
         if self.store.doctor.get("bisect"):
@@ -501,30 +597,48 @@ class Controller:
         return msg
 
     # ---------- local AI ----------
-    def setup_ai(self, model):
-        """Install and start Ollama when needed, then download the model."""
+    def setup_ai(self):
+        """Download the engine and the model when they are missing (a run from source), then start the engine once."""
         try:
-            if not ollama.exe():
-                self.notify("ai_status", "Installing Ollama (the program that runs the local AI)…")
-                ollama.install()
-            ollama.start()
-            if not ollama.has_model(model):
-                self.notify("ai_status", f"Downloading {model}…")
-                ollama.pull(model, lambda pct: self.notify("ai_status", f"Downloading {model}: {pct}%"))
-            self.notify("ai_status", f"✔ Ready: {model} runs on this PC.")
+            if self.game_on:
+                raise RuntimeError(GAME_ON)
+            if not llm.ready():
+                llm.fetch(lambda what, done, total: self.notify(
+                    "ai_status", f"Downloading the local AI ({what}): {done * 100 // total if total else 0}%"))
+            self.notify("ai_status", "Starting the local AI…")
+            llm.start()
+            self.notify("ai_status", "✔ Ready: the local AI runs on this PC. It stops when the game starts or this window closes.")
         except Exception as e:  # noqa: BLE001 - shown to the user
             self.notify("ai_status", f"✖ {e}")
 
-    def ask_ai(self):
-        """Check the mods, let the local AI pick fixes and load-order rules, and send the advice to the window."""
+    def ask_ai(self, report=""):
+        """Check the mods, let the local AI pick fixes and load-order rules, and send the advice to the window.
+        `report`: the player's own words about a bug; the AI then also names the cause and changes for those mods."""
         try:
-            ollama.start()
+            if self.game_on:
+                raise RuntimeError(GAME_ON)
+            llm.start()
             probs = self.check_now()
             # One copy of the list: the AI's mod numbers map back to it, and a framework install can shift the live one.
-            a = ollama.advise(self.store.settings["ai_model"], list(self.store.mods), probs)
+            mods = list(self.store.mods)
+            a = llm.advise(mods, probs, report.strip())
             a["fixes"] = a["fixes"][:10]  # the window lists 10: apply only fixes the user saw
             order = doctor.best_order(self.store, a["after"])
-            moved = doctor.moved([m["id"] for m in self.store.mods], order)
+            moved = doctor.moved([m["id"] for m in mods], order)
+            base = order if moved else [m["id"] for m in mods]
+            mine = {"title": "Your bug report"}
+            for m, act, why in a.pop("mod_fixes", [])[:5]:
+                n = m["name"]
+                if act == "turn_on" and not m["enabled"]:
+                    a["fixes"].append((mine, doctor.fix(f"Turn on {n}", "enable", m["id"]), why))
+                elif act == "turn_off" and m["enabled"]:
+                    a["fixes"].append((mine, doctor.fix(f"Turn off {n}", "disable", m["id"]), why))
+                elif act == "update" and m.get("source", {}).get("type") in ("nexus", "github"):
+                    a["fixes"].append((mine, doctor.fix(f"Update {n} to its newest version", "update", m["id"]), why))
+                elif act == "load_last" and base[-1] != m["id"] and not any(  # a picked "Let it win" fix does it already
+                        f["action"][:2] == ["prefer", m["id"]] for _, f, _ in a["fixes"]):  # applied after the order
+                    base = [i for i in base if i != m["id"]] + [m["id"]]
+                    a["fixes"].append((mine, doctor.fix(f"Load {n} last, so it wins", "order", base), why))
             self.notify("ai", {**a, "order": order if moved else None, "moved": moved})
         except Exception as e:  # noqa: BLE001 - shown to the user
             self.notify("ai", {"error": str(e)})

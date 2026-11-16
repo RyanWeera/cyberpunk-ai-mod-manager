@@ -17,6 +17,8 @@ venv/
 *.exe
 build/
 dist/
+release/
+*.zip
 *.spec
 
 # Secrets and keys (never commit)
@@ -43,3 +45,8 @@ CLAUDE.md
 CLAUDE.local.md
 security-audit-report.md
 *.dmp
+
+# The local AI engine and model: downloaded by local_ai.fetch(), shipped in the release zip
+local_ai/engine/
+local_ai/model/
+local_ai/download/

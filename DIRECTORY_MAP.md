@@ -8,7 +8,7 @@ Start here: `manager_ui/` (the root `app.py` only handles the single window and 
 - `crash_doctor/` - game process watch, crash evidence, log diagnosis, archive conflicts, bad-mod search
 - `video_finder/` - find the mods a YouTube, TikTok, Instagram or other video shows, from its description or caption
 - `ai_link/` - MCP server, so Claude and other AI apps can add mods and sort or check them through the window
-- `local_ai/` - optional local AI (Ollama) that picks fixes and finds patches for the load order
+- `local_ai/` - the local AI (bundled llama.cpp engine and model) that explains bugs, picks fixes and finds patches for the load order
 - `virus_scan/` - Microsoft Defender scan of downloads
 - `shared/` - settings, mod list storage, game folder detection
 - `tests/` - unittest suite with fake game folders, plus a real-crash end-to-end check

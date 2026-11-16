@@ -1,6 +1,8 @@
 """The tools that AI apps (Claude Desktop, Claude Code, Cursor and other MCP apps) can call. `TOOLS` is what the
 MCP server lists; `run` does a call inside the mod manager window, with the same controller the buttons use."""
 import json
+import re
+from pathlib import Path
 
 from downloads import nexus
 from downloads.fetch import FW_BY_REPO
@@ -107,6 +109,14 @@ def run(ctl, msg):
         fn = {t["name"]: globals()[t["name"]] for t in TOOLS}.get(req["tool"])
         if not fn:
             return {"error": f"Unknown tool: {req['tool']}"}
-        return {"text": fn(ctl, **(req.get("args") or {}))}
+        return {"text": private(fn(ctl, **(req.get("args") or {})))}
     except Exception as e:  # noqa: BLE001 - goes back to the AI app as the tool's error
-        return {"error": str(e) or type(e).__name__}
+        return {"error": private(str(e) or type(e).__name__)}
+
+
+def private(text):
+    """The home folder holds the Windows user name: the AI app (often an online service) sees it as ~."""
+    home = str(Path.home())
+    for h in (home, home.replace("\\", "\\\\"), home.replace("\\", "/")):
+        text = re.sub(re.escape(h), "~", text, flags=re.IGNORECASE)
+    return text

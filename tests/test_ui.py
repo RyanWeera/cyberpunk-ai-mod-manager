@@ -22,8 +22,10 @@ class Window(unittest.TestCase):
         self.store = Store(self.tmp / "data")
         self.root = tk.Tk()
         self.root.withdraw()
-        with mock.patch.object(ui, "find_game", lambda: ""):
-            self.app = ui.App(self.root, store=self.store)
+        find = mock.patch.object(ui, "find_game", lambda: "")  # never point a test at the real game on this PC
+        find.start()
+        self.addCleanup(find.stop)
+        self.app = ui.App(self.root, store=self.store)
         self.root.update()
 
     def tearDown(self):
@@ -185,8 +187,22 @@ class Window(unittest.TestCase):
             app.show_ai({"summary": "", "fixes": [], "order": None, "moved": 0})
         self.assertIn("nothing to change", info.call_args.args[1])
         with mock.patch.object(ui.messagebox, "showerror") as err:
-            app.show_ai({"error": "Ollama did not start."})
-        err.assert_called_once_with("Local AI", "Ollama did not start.")
+            app.show_ai({"error": "The local AI did not start."})
+        err.assert_called_once_with("Local AI", "The local AI did not start.")
+
+    def test_bug_report_goes_to_the_local_ai(self):
+        app = self.app
+        with mock.patch.object(ui.messagebox, "showinfo") as info, mock.patch.object(app.ctl, "bg") as bg:
+            app.ask_bug()  # nothing written
+        bg.assert_not_called()
+        info.assert_called_once()
+        app.bug_text.insert("1.0", "  My modded car does not show up \n")
+        with mock.patch.object(app.ctl, "bg") as bg:
+            app.ask_bug()
+        bg.assert_called_once_with(app.ctl.ask_ai, "My modded car does not show up")
+        with mock.patch.object(ui.messagebox, "showinfo") as info:
+            app.show_ai({"summary": "s", "cause": "The car mod is off.", "fixes": [], "order": None, "moved": 0})
+        self.assertTrue(info.call_args.args[1].startswith("Why it happens: The car mod is off."))
 
     def test_stalled_pipe_callers_are_cut_off(self):
         pipe = rf"\\.\pipe\cp2077mm-test-{uuid.uuid4().hex}"
@@ -293,6 +309,29 @@ class Window(unittest.TestCase):
         app.ctl.redeploy(sync=True)  # after close: no new copy starts, not even here
         app.ctl.launch()
         self.assertEqual(self.store.deployed, {})
+
+    def test_mod_packs_in_the_window(self):
+        app = self.app
+        self.store.mods = [mod("a", []), mod("b", [], enabled=False)]
+        with mock.patch.object(ui.simpledialog, "askstring", return_value=" Night "):
+            app.save_pack()
+        self.assertEqual((app.pack_pick.get(), list(app.pack_pick.cget("values"))), ("Night", [ui.CURRENT, "Night"]))
+        self.store.settings["game_dir"] = str(fake_game(self.tmp))
+        for pick, pack in (("Night", "Night"), (ui.CURRENT, None)):
+            app.pack_pick.set(pick)
+            with mock.patch.object(app.ctl, "bg") as bg:
+                app.launch()
+            bg.assert_called_once_with(app.ctl.launch, pack)
+        app.ctl.save_pack("Day")
+        app.merge_packs()
+        [box] = [w for w in app.merge_win.winfo_children() if isinstance(w, tk.Listbox)]
+        box.selection_set(0, 1)
+        app.merge_ok()
+        self.assertEqual((app.pack_pick.get(), self.store.packs["Merged pack"]), ("Merged pack", [["a", True], ["b", False]]))
+        with mock.patch.object(ui.messagebox, "askyesno", return_value=True):
+            app.delete_pack()
+        self.assertNotIn("Merged pack", self.store.packs)
+        self.assertEqual(app.pack_pick.get(), ui.CURRENT)
 
     def test_problem_picker_applies_chosen_fix(self):
         app = self.app

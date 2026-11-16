@@ -192,8 +192,18 @@ def install(archive, stage, name):
         extract(archive, tree, name)
         src = fomod_tree(tree, Path(tmp) / "fomod") or tree
         pairs = layout(src, name)
+        inner = sorted(p for p in tree.rglob("*") if p.suffix.lower() in (".zip", ".7z", ".rar") and p.is_file()
+                       and not p.is_symlink() and p.resolve().is_relative_to(tree.resolve()))
+        if not pairs and len(inner) == 1:  # some mods pack their real archive inside another one
+            tree = Path(tmp) / "y"
+            tree.mkdir()
+            extract(inner[0], tree, name)
+            pairs = layout(fomod_tree(tree, Path(tmp) / "fomod2") or tree, name)
         if not pairs:
-            raise RuntimeError(f"{name} has no files the game can load")
+            raise RuntimeError(f"{name} has no files the game can load" + (
+                f". It holds {len(inner)} other archives ({', '.join(p.name for p in inner[:5])}): unpack it and add the "
+                "one you want with 'Add files from this PC'" if len(inner) > 1 else
+                f", and neither has the archive inside it ({inner[0].name})" if inner else ""))
         shutil.rmtree(stage, ignore_errors=True)
         for f, rel in pairs:
             d = Path(stage) / rel
