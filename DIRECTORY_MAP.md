@@ -13,6 +13,7 @@ Start here: `manager_ui/` (the root `app.py` only handles the single window and 
 - `shared/` - settings, mod list storage, game folder detection
 - `tests/` - unittest suite with fake game folders, plus a real-crash end-to-end check
 - `docs/` - README screenshot
+- `.github/` - CI workflow that runs the tests on Windows
 
 ## Where to change things
 - Add a link type or Nexus query -> `downloads/`

@@ -277,6 +277,12 @@ class Pipeline(unittest.TestCase):
             c._game_exited(0)
         self.assertFalse(c.game_on)
         block.assert_called_once_with(False)  # the AI may start again
+        with mock.patch.object(ctl_mod.watch, "crash_evidence", return_value={"crashed": False}), \
+                mock.patch.object(ctl_mod.watch, "read_dump", return_value={"stack": []}) as read, mock.patch.object(ctl_mod.llm, "block"):
+            c._game_exited(0, None, Path("freeze.dmp"))
+        read.assert_called_once_with(Path("freeze.dmp"))
+        self.assertTrue(c.store.doctor["last_exit"]["crashed"])  # a freeze the game never came back from counts as a crash
+        self.assertIn("LAST GAME EXIT", c.crash_report())
         with mock.patch.object(self.store, "save", side_effect=OSError("disk full")):
             c._game_started(1)  # no error: else the game watch would skip the exit and the AI would stay off
         self.assertTrue(c.game_on)

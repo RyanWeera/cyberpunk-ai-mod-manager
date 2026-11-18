@@ -16,7 +16,23 @@ from ai_link import tools
 from local_ai import llm
 from manager_ui.controller import CORE, Controller
 from shared.store import VERSION, Store, find_game, kind_of
-BG, PANEL, PANEL2, FG, DIM, ACCENT = "#0e1016", "#181b24", "#232837", "#e8e8e8", "#8a8f9c", "#fcee0a"
+# HOT = accent under the mouse, INK = text on the accent, SEL = selected rows and text
+THEMES = {
+    "Cyberpunk": {"BG": "#0e1016", "PANEL": "#181b24", "PANEL2": "#232837", "FG": "#e8e8e8", "DIM": "#8a8f9c", "ACCENT": "#fcee0a",
+                  "HOT": "#fff35c", "INK": "#000000", "HOVER": "#30364a", "SEL": "#3a3f12", "BANNER": "#2b2610"},
+    "Arasaka": {"BG": "#0a0a0b", "PANEL": "#151517", "PANEL2": "#212125", "FG": "#f2f2f2", "DIM": "#8e8e96", "ACCENT": "#e3122d",
+                "HOT": "#ff3b52", "INK": "#ffffff", "HOVER": "#33333a", "SEL": "#4a0c15", "BANNER": "#2a0b10"},
+    "Militech": {"BG": "#0f120d", "PANEL": "#191e16", "PANEL2": "#252c20", "FG": "#e4e8dc", "DIM": "#8c947e", "ACCENT": "#f29d35",
+                 "HOT": "#ffb85c", "INK": "#000000", "HOVER": "#343d2c", "SEL": "#3e3216", "BANNER": "#2b2311"},
+}
+BG = PANEL = PANEL2 = FG = DIM = ACCENT = HOT = INK = HOVER = SEL = BANNER = ""  # set by use_theme
+
+
+def use_theme(name):
+    globals().update(THEMES.get(name) or THEMES["Cyberpunk"])
+
+
+use_theme("Cyberpunk")
 OK, BAD, WARN = "#3ddc84", "#ff6b6b", "#ffb347"
 KEY_PAGE = "https://next.nexusmods.com/settings/api-keys"
 EXAMPLES = ("https://www.nexusmods.com/cyberpunk2077/mods/107\n"
@@ -68,6 +84,7 @@ class App:
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.geometry(f"{self.px(1180)}x{self.px(760)}")
         root.minsize(self.px(900), self.px(560))
+        use_theme(self.store.settings["theme"])
         root.configure(bg=BG)
         icon = Path(__file__).with_name("icon.png")
         if icon.exists():
@@ -105,13 +122,13 @@ class App:
         s.configure("TNotebook.Tab", background=PANEL, foreground=DIM, padding=(16, 7), borderwidth=0)
         s.map("TNotebook.Tab", background=[("selected", PANEL2)], foreground=[("selected", ACCENT)])
         s.configure("TButton", background=PANEL2, foreground=FG, padding=(12, 6), borderwidth=0)
-        s.map("TButton", background=[("active", "#30364a"), ("disabled", PANEL)], foreground=[("disabled", DIM)])
-        s.configure("Big.TButton", background=ACCENT, foreground="#000", font=("Segoe UI Semibold", 10))
-        s.map("Big.TButton", background=[("active", "#fff35c")])
+        s.map("TButton", background=[("active", HOVER), ("disabled", PANEL)], foreground=[("disabled", DIM)])
+        s.configure("Big.TButton", background=ACCENT, foreground=INK, font=("Segoe UI Semibold", 10))
+        s.map("Big.TButton", background=[("active", HOT)])
         s.configure("Treeview", background=PANEL, fieldbackground=PANEL, foreground=FG, rowheight=self.px(26), borderwidth=0)
         s.configure("Treeview.Heading", background=PANEL2, foreground=ACCENT, borderwidth=0, padding=(6, 4))
         s.map("Treeview.Heading", background=[("active", PANEL2)])
-        s.map("Treeview", background=[("selected", "#3a3f12")], foreground=[("selected", FG)])
+        s.map("Treeview", background=[("selected", SEL)], foreground=[("selected", FG)])
         s.configure("TEntry", fieldbackground=PANEL, foreground=FG, insertcolor=FG, padding=5)
         s.configure("Vertical.TScrollbar", background=PANEL2, troughcolor=BG, arrowcolor=DIM, borderwidth=0)
         s.configure("Horizontal.TProgressbar", background=ACCENT, troughcolor=PANEL, borderwidth=0)
@@ -125,8 +142,8 @@ class App:
         s.configure("Card.TFrame", background=PANEL)
         s.configure("Card.TLabel", background=PANEL, foreground=FG)
         s.configure("CardDim.TLabel", background=PANEL, foreground=DIM)
-        s.configure("Banner.TFrame", background="#2b2610")
-        s.configure("Banner.TLabel", background="#2b2610", foreground=ACCENT)
+        s.configure("Banner.TFrame", background=BANNER)
+        s.configure("Banner.TLabel", background=BANNER, foreground=ACCENT)
 
     def _buttons(self, parent, spec):
         """spec: (label, command, tooltip). Labels starting with ▶ get the main colour."""
@@ -155,7 +172,7 @@ class App:
 
     def _text(self, parent, height, font=("Consolas", 10)):
         return tk.Text(parent, height=height, bg=PANEL, fg=FG, insertbackground=FG, relief="flat", wrap="word", font=font,
-                       padx=8, pady=6, highlightthickness=0, selectbackground="#3a3f12")
+                       padx=8, pady=6, highlightthickness=0, selectbackground=SEL)
 
     def _header(self):
         head = ttk.Frame(self.root, padding=(16, 12, 16, 0))
@@ -226,7 +243,7 @@ class App:
         self.mods.bind("<Control-A>", self.select_all)  # Caps Lock on
         self.mods.bind("<Button-1>", self._mods_click, add="+")
         self.mods.bind("<Button-3>", self._mods_menu)
-        self.menu = tk.Menu(self.root, tearoff=0, bg=PANEL2, fg=FG, activebackground=ACCENT, activeforeground="#000", bd=0)
+        self.menu = tk.Menu(self.root, tearoff=0, bg=PANEL2, fg=FG, activebackground=ACCENT, activeforeground=INK, bd=0)
         for label, cmd in (("Turn on / off", self.toggle), ("Update", self.update), ("Open folder", self.open_folder),
                            ("Move up", lambda: self.move(-1)), ("Move down", lambda: self.move(1)), ("Remove", self.remove)):
             self.menu.add_command(label=label, command=cmd)
@@ -323,7 +340,9 @@ class App:
             ("Ask the local AI", self.ask_ai, "The AI on this PC reads your load order and the problems, then suggests fixes "
                                               "and mod moves. You see them before anything changes. Set it up in the AI helpers tab."),
             ("Find the bad mod for me", self.bisect_begin, "Turns half the mods off for each game start until the mod that crashes the game is found."),
-            ("Stop the search", self.bisect_cancel, "Stop the bad-mod search and turn your mods back on.")]).pack(fill="x", pady=8)
+            ("Stop the search", self.bisect_cancel, "Stop the bad-mod search and turn your mods back on."),
+            ("Save crash report", self.save_report, ("Save a text file about the last crash or freeze and your mods, to share with "
+                                                     "a mod author. Folder paths of this PC are hidden."))]).pack(fill="x", pady=8)
         hist = ttk.Frame(f)  # packed at the bottom first, so the problem list cannot squeeze it out
         hist.pack(side="bottom", fill="x")
         head = ttk.Frame(hist)
@@ -433,8 +452,14 @@ class App:
                 ("include_optional", "Download optional files in collections")], start=9):
             v = self.flags[key] = tk.BooleanVar(value=st[key])
             ttk.Checkbutton(f, text=text, variable=v, command=self.save_settings).grid(row=row, column=0, columnspan=3, sticky="w", pady=3)
+        ttk.Label(f, text="Style").grid(row=12, column=0, sticky="w", pady=(10, 3))
+        self.theme_var = tk.StringVar(value=st["theme"])
+        pick = ttk.Frame(f)
+        pick.grid(row=12, column=1, columnspan=2, sticky="w", pady=(10, 3))
+        for name in THEMES:
+            ttk.Radiobutton(pick, text=name, value=name, variable=self.theme_var, command=self.set_theme).pack(side="left", padx=(0, 14))
         foot = ttk.Frame(f)
-        foot.grid(row=12, column=0, columnspan=3, sticky="we", pady=(22, 0))
+        foot.grid(row=13, column=0, columnspan=3, sticky="we", pady=(22, 0))
         ttk.Button(foot, text="Open data folder", command=lambda: os.startfile(self.store.root)).pack(side="right")
         ttk.Label(foot, style="Dim.TLabel", text=f"Mods, backups and settings are kept in {self.store.root}").pack(side="left", fill="x")
         self.refresh_settings()
@@ -545,7 +570,7 @@ class App:
         ttk.Label(win, text="Pick the packs to merge. When two mods change the same file, the pack lower in this list wins. "
                             "You can change that later in the Crash doctor tab.", wraplength=self.px(460)).pack(padx=14, pady=(12, 6))
         box = tk.Listbox(win, selectmode="multiple", height=min(15, len(names)), bg=PANEL2, fg=FG, selectbackground=ACCENT,
-                         selectforeground="#000", highlightthickness=0, bd=0, exportselection=False)
+                         selectforeground=INK, highlightthickness=0, bd=0, exportselection=False)
         for n in names:
             box.insert("end", f"{n}  ({len(self.store.packs[n])} mods)")
         box.pack(fill="both", expand=True, padx=14)
@@ -822,6 +847,17 @@ class App:
             self.refresh_history()
             self.say("Fix reversed.")
 
+    def save_report(self):
+        path = filedialog.asksaveasfilename(title="Save crash report", defaultextension=".txt", filetypes=[("Text", "*.txt")],
+                                            initialfile=f"cp2077-crash-report-{time.strftime('%Y%m%d-%H%M')}.txt")
+        if not path:
+            return
+        try:
+            Path(path).write_text(self.ctl.crash_report(), encoding="utf-8")
+        except OSError as e:
+            return messagebox.showerror("Save crash report", f"Could not save the report: {e}")
+        self.say(f"Crash report saved: {path}")
+
     def bisect_begin(self):
         if messagebox.askyesno("Find the bad mod", "I will turn half of your mods off. Start the game and play until it crashes, "
                                                    "or quit normally if it does not. I repeat this until I find the bad mod.\n\nStart?"):
@@ -857,6 +893,31 @@ class App:
             self.redeploy()
         self.refresh_settings()
         self.refresh_mods()
+
+    def set_theme(self):
+        self.store.settings["theme"] = self.theme_var.get()
+        self.store.save()
+        use_theme(self.store.settings["theme"])
+        self._style()
+        self.root.configure(bg=BG)
+        self._recolor(self.root)
+
+    def _recolor(self, w):
+        """Plain Tk widgets keep the colours they were made with; ttk ones follow _style."""
+        for c in w.winfo_children():
+            if isinstance(c, tk.Text):
+                c.configure(bg=PANEL, fg=FG, insertbackground=FG, selectbackground=SEL)
+                c.tag_configure("ph", foreground=DIM)
+            elif isinstance(c, tk.Listbox):
+                c.configure(bg=PANEL2, fg=FG, selectbackground=ACCENT, selectforeground=INK)
+            elif isinstance(c, tk.Menu):
+                c.configure(bg=PANEL2, fg=FG, activebackground=ACCENT, activeforeground=INK)
+            elif isinstance(c, tk.Toplevel):
+                c.configure(bg=BG)
+            elif isinstance(c, ttk.Treeview):
+                for tag in ("off", "queued", "info"):
+                    c.tag_configure(tag, foreground=DIM)
+            self._recolor(c)
 
     def check_key(self):
         if self.key_var.get().strip() != self.store.settings["api_key"]:

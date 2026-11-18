@@ -5,11 +5,15 @@ A problem is {"id", "title", "detail", "severity", "auto", "fixes": [{"label", "
 auto=True is fixed without asking; any other problem is shown to the user to pick a fix.
 """
 import bisect
+import ctypes
 import heapq
+import os
 import re
 import struct
+import time
 from collections import Counter
-from itertools import combinations
+from datetime import datetime
+from itertools import combinations, pairwise
 
 from downloads.fetch import FRAMEWORKS, FW_BY_NEXUS
 
@@ -17,6 +21,21 @@ LEVEL_OK = re.compile(r"(?i)\[(info|debug|trace)\b")
 ERR = re.compile(r"(?i)\b(error|critical|fatal|exception|failed)\b")
 PATH = re.compile(r"(?:^|[\s'\"(\[=])((?:archive|bin|engine|r6|red4ext|mods)/[^:'\"()<>|*?,\r\n]+)")
 ARCH = re.compile(r"([^\s/:'\"]+\.archive)\b")
+ACR = "bin/x64/plugins/AdvancedCrashReporter/reports"  # reports of the Advanced Crash Reporter mod, when it is installed
+CODES = {  # Windows exception codes in plain words
+    0xC0000005: "Code 0xC0000005: the game read or wrote memory it does not own. A DLL mod made for another game version "
+                "often causes this.",
+    0xC0000409: "Code 0xC0000409: the game found damaged memory on its call stack and stopped itself.",
+    0xC00000FD: "Code 0xC00000FD: a function called itself again and again until the stack was full.",
+    0xC0000374: "Code 0xC0000374: the game's memory heap became damaged, often by a mod that wrote past its memory.",
+    0xC000001D: "Code 0xC000001D: the processor found an instruction it does not know.",
+    0x80000003: "Code 0x80000003: the game or a mod stopped on purpose after a fatal error.",
+    0xE06D7363: "Code 0xE06D7363: a C++ error was thrown and nothing caught it.",
+}
+HAND = ["archive/pc/mod", "mods", "red4ext/plugins", "bin/x64/plugins/cyber_engine_tweaks/mods", "bin/x64/plugins",
+        "r6/scripts", "r6/tweaks"]  # where players put mods by hand
+STAMP = re.compile(r"^\[(\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d(?:\.\d+)?)")
+SLOW = 3.0  # seconds: a DLL mod that loads slower than this slows every game start
 LOGS = ["r6/logs", "red4ext/logs", "red4ext/plugins", "bin/x64/plugins/cyber_engine_tweaks"]
 # Folders that hold the game's own files and many mods' files: a crash or log there never blames one mod.
 SHARED = {"archive", "archive/pc", "archive/pc/mod", "archive/pc/content", "bin", "bin/x64", "bin/x64/plugins",
@@ -271,19 +290,224 @@ def moved(old, new):
     return len(places) - len(tails)
 
 
+def acr_report(game, since):
+    """(path, text) of the newest Advanced Crash Reporter report written since `since`, or None."""
+    d = game / ACR
+    reps = []
+    for f in d.glob("*") if d.is_dir() else []:
+        try:
+            if f.is_file() and f.stat().st_mtime >= since:
+                reps.append((f.stat().st_mtime, f))
+        except OSError:
+            continue
+    if not reps:
+        return None
+    f = max(reps)[1]
+    try:
+        with open(f, "rb") as fh:  # the summary is at the top; the full report lists every installed mod
+            return f, fh.read(6000).decode("utf-8", "replace")
+    except OSError:
+        return None
+
+
+def call_path(ev, idx, game, blamed, store, has_update, what="crashed"):
+    """Mods whose code is on the stack of the crashing thread (or of the main thread in a freeze). With no mod blamed yet,
+    the newest one is the main suspect."""
+    probs, places = [], ev.get("places") or {}
+    for module in ev.get("stack") or []:
+        mid = owners_in(module, idx, game)
+        if not mid or mid in blamed:
+            continue
+        m = store.mod(mid)
+        first = not blamed
+        blamed.add(mid)
+        if first:
+            title, why = f"{m['name']} was running when the game {what}", "This is a strong hint, not proof."
+        else:
+            title, why = f"{m['name']} is in the call path", "An earlier call on the same thread, so it is less likely the cause."
+        where = f"\nWhere: {places[module]}" if module in places else ""
+        probs.append(problem(f"{'stack' if what == 'crashed' else 'freeze'}-{mid}", title, f"{module}{where}\n{why}",
+                             mod_fixes(m, has_update), severity="high" if first else "medium", auto=False))
+    return probs
+
+
+def freeze_problems(hang, idx, game, blamed, store, has_update):
+    """Problems from the snapshot of a game that stopped responding and never came back."""
+    probs = call_path(hang, idx, game, blamed, store, has_update, what="froze")
+    others = [store.mod(mid)["name"] for mid in dict.fromkeys(owners_in(m, idx, game) for m in hang.get("others") or [])
+              if mid and mid not in blamed]
+    note = ("\nMod code on other game threads (each may be waiting, not stuck): " + ", ".join(others)) if others else ""
+    if probs:
+        probs[0]["detail"] += note
+    else:
+        probs.append(problem("freeze", "The game froze, with no mod code on its main thread",
+                             "The game stopped responding and did not come back. A mesh, texture or tweak mod (no code) can do "
+                             "this too." + note,
+                             [fix("Find the bad mod automatically (disables half the mods per game launch)", "bisect_start")],
+                             auto=False))
+    return probs
+
+
+def hand_installed(store):
+    """[(game path, modified time)] of mods in the game folder that this app did not install, newest first."""
+    game = store.game()
+    if not game:
+        return []
+    ours = set()
+    for m in store.mods:
+        for rel in m["files"]:
+            parts = rel.lower().split("/")
+            ours.update("/".join(parts[:i]) for i in range(1, len(parts) + 1))
+    out = []
+    for root in HAND:
+        d = game / root
+        if not d.is_dir():
+            continue
+        for e in d.iterdir():
+            rel = f"{root}/{e.name}"
+            if rel.lower() in ours or rel.lower() in HAND or e.name.lower() == "cyber_engine_tweaks":
+                continue
+            try:
+                out.append((rel, e.stat().st_mtime))
+            except OSError:
+                continue
+    return sorted(out, key=lambda x: -x[1])
+
+
+def recent_hand_installed(store, days=7):
+    hand = [h for h in hand_installed(store) if h[1] >= time.time() - days * 86400]
+    if not hand:
+        return []
+    pid = f"manual-{int(hand[0][1])}"
+    if pid in store.doctor.get("ignored", []):
+        return []
+    return [problem(pid, f"{len(hand)} mod(s) installed by hand changed in the last {days} days",
+                    "This app did not install these, so it cannot turn them off. To test one, move it out of the game "
+                    "folder:\n" + "\n".join(f"{time.strftime('%Y-%m-%d', time.localtime(t))}  {rel}" for rel, t in hand[:20]),
+                    [fix("Hide this", "ignore", pid)], severity="medium", auto=False)]
+
+
+def game_version(game):
+    """File version of the game's exe, e.g. "3.0.81.8013", or its size when Windows gives no version."""
+    exe = str(game / "bin/x64/Cyberpunk2077.exe")
+    try:
+        v = ctypes.windll.version
+        n = v.GetFileVersionInfoSizeW(exe, None)
+        buf, ptr, size = ctypes.create_string_buffer(n), ctypes.c_void_p(), ctypes.c_uint()
+        if n and v.GetFileVersionInfoW(exe, 0, n, buf) and v.VerQueryValueW(buf, "\\", ctypes.byref(ptr), ctypes.byref(size)):
+            ms, ls = struct.unpack_from("<II", ctypes.string_at(ptr, 16), 8)  # VS_FIXEDFILEINFO: signature, struct version, MS, LS
+            return f"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}.{ls & 0xFFFF}"
+        return f"size {os.path.getsize(exe)}"
+    except (OSError, AttributeError):
+        return None
+
+
+def game_updated(store, has_update=None):
+    """A problem when the game changed since the last launch that worked: frameworks often break after a patch."""
+    has_update = has_update or (lambda m: False)
+    game, old = store.game(), store.doctor.get("last_good_game")
+    new = game and old and game_version(game)
+    pid = f"game-{new}"
+    if not new or new == old or pid in store.doctor.get("ignored", []):
+        return []
+    ups = [m for m in store.enabled() if m.get("framework") and has_update(m)]
+    fixes = [fix(f"Update {m['name']} to its newest version", "update", m["id"], recommended=True) for m in ups]
+    return [problem(pid, "The game was updated since the last launch that worked",
+                    f"Game version {old} -> {new}. RED4ext, Cyber Engine Tweaks, redscript and other frameworks often need an "
+                    "update after a game patch. " + ("Updates found: " + ", ".join(m["name"] for m in ups) if ups else
+                                                    "No framework update is known yet. Check their Nexus pages."),
+                    fixes + [fix("Hide this", "ignore", pid)], severity="high" if ups else "medium", auto=False)]
+
+
+def slow_mods(game, since, idx, limit=SLOW):
+    """{mod id: seconds} for DLL mods that took longer than `limit` to load, from RED4ext's log: the time from the line
+    that loads the mod to the next line."""
+    d = game / "red4ext/logs"
+    found = {}
+    try:
+        logs = [f for f in d.glob("red4ext*.log") if f.stat().st_mtime >= since] if d.is_dir() else []
+        if not logs:
+            return {}
+        lines = max(logs, key=lambda f: f.stat().st_mtime).read_text(encoding="utf-8", errors="replace").splitlines()[-5000:]
+        stamped = [(datetime.fromisoformat(m[1].replace(" ", "T")), line) for line in lines if (m := STAMP.match(line))]
+    except (OSError, ValueError):  # the log changed while read, or a bad time stamp
+        return {}
+    for (t, line), (t2, _) in pairwise(stamped):
+        if re.search(r"(?i)loading plugin", line) and (mid := owners_in(line, idx, game)):
+            secs = (t2 - t).total_seconds()
+            if max(limit, found.get(mid, 0)) < secs < 120:  # a longer gap is a quiet log, not a slow load
+                found[mid] = secs
+    return found
+
+
+def report(store, probs, crash=None):
+    """Plain-text report to share with a mod author. Folder paths of this PC are hidden."""
+    game = store.game()
+    out = [f"Cyberpunk 2077 AI Mod Manager crash report, {time.strftime('%Y-%m-%d %H:%M')}"]
+    if game:
+        out.append(f"Game version: {game_version(game)}")
+    if crash:
+        out += ["", "== LAST GAME EXIT ==", f"Crashed: {'yes' if crash.get('crashed') else 'no'}"]
+        if crash.get("exit_code") is not None:
+            out.append(f"Exit code: 0x{crash['exit_code']:08X}")
+        if crash.get("code") in CODES:
+            out.append(CODES[crash["code"]])
+        if crash.get("module"):
+            out.append(f"Crashed in: {crash['module']}  {(crash.get('places') or {}).get(crash['module'], '')}")
+        for name, ev in (("Crashing thread", crash), ("Main thread at the freeze", crash.get("hang") or {})):
+            if ev.get("stack"):
+                out.append(f"{name}, newest call first:")
+                out += [f"  {(ev.get('places') or {}).get(m, '')}  {m}" for m in ev["stack"]]
+        if (crash.get("hang") or {}).get("others"):
+            out.append("Other threads at the freeze: " + ", ".join(crash["hang"]["others"]))
+    out += ["", "== PROBLEMS FOUND =="] + ([f"[{p['severity']}] {p['title']}\n  " + p["detail"].replace("\n", "\n  ") for p in probs] or ["None"])
+    out += ["", "== MODS IN LOAD ORDER (lower wins) =="]
+    out += [f"{'on ' if m['enabled'] else 'off'}  {m['name']}  {m.get('version', '')}" for m in store.mods]
+    hand = hand_installed(store)
+    if hand:
+        out += ["", "== MODS INSTALLED BY HAND =="]
+        out += [f"{time.strftime('%Y-%m-%d', time.localtime(t))}  {rel}" for rel, t in hand]
+    text = "\n".join(out) + "\n"
+    for path, name in ((str(game) if game else None, "<game>"), (os.path.expanduser("~"), "%USERPROFILE%")):
+        for p in {path, path.replace("\\", "/")} if path else ():
+            text = re.sub(re.escape(p), name, text, flags=re.IGNORECASE)  # Windows paths may differ in case
+    return text
+
+
 def diagnose(store, since=0.0, crash=None, has_update=None):
     """All problems, worst first. `crash` is watch.crash_evidence() output when the game just crashed."""
     has_update = has_update or (lambda m: False)
     game = store.game()
     idx = owner_index(store)
-    probs = missing_frameworks(store) + missing_requirements(store)
+    probs = missing_frameworks(store) + missing_requirements(store) + game_updated(store, has_update)
     blamed = set()
     if crash and crash.get("module") and game:
         mid = owners_in(crash["module"], idx, game)
         if mid:
             m = store.mod(mid)
             blamed.add(mid)
-            probs.append(problem(f"crash-{mid}", f"The game crashed inside {m['name']}", crash["module"], mod_fixes(m, has_update)))
+            why = CODES.get(crash.get("code"))
+            where = (crash.get("places") or {}).get(crash["module"])
+            probs.append(problem(f"crash-{mid}", f"The game crashed inside {m['name']}",
+                                 crash["module"] + (f"\nWhere: {where}" if where else "") + (f"\n{why}" if why else ""),
+                                 mod_fixes(m, has_update)))
+    if crash and game:
+        probs += call_path(crash, idx, game, blamed, store, has_update)
+        if crash.get("hang"):
+            probs += freeze_problems(crash["hang"], idx, game, blamed, store, has_update)
+        rep = crash.get("crashed") and acr_report(game, since - 15 if since else 0)
+        if rep:
+            mid = owners_in(rep[1].split("INSTALLED MODS")[0], idx, game)  # the full mod list comes after the verdict
+            m = store.mod(mid) if mid else None
+            detail = f"Report: {rep[0]}\n\n{rep[1][:1500]}"
+            if m and mid not in blamed:
+                blamed.add(mid)
+                probs.append(problem(f"acr-{mid}", f"Advanced Crash Reporter names {m['name']}", detail, mod_fixes(m, has_update),
+                                     auto=False))
+            elif not m and f"acr-{rep[0].name}" not in store.doctor.get("ignored", []):
+                pid = f"acr-{rep[0].name}"
+                probs.append(problem(pid, "Advanced Crash Reporter wrote a report", detail, [fix("Hide this report", "ignore", pid)],
+                                     severity="info", auto=False))
     if game:
         # `since` is when polling saw the game (up to one poll late): look a little further back for early log lines
         for mid, hit in log_errors(game, since - 15 if since else 0, idx).items():
@@ -292,6 +516,14 @@ def diagnose(store, since=0.0, crash=None, has_update=None):
                 continue
             probs.append(problem(f"log-{mid}", f"{m['name']} reported errors", "\n".join(hit["lines"]), mod_fixes(m, has_update),
                                  severity="high" if hit["strong"] else "medium", auto=hit["strong"]))
+        for mid, secs in slow_mods(game, since - 15 if since else 0, idx).items():
+            m = store.mod(mid)
+            if m:
+                probs.append(problem(f"slow-{mid}", f"{m['name']} took {secs:.0f} seconds to load",
+                                     "Seen in RED4ext's log. A slow DLL mod makes every game start slow, and can make the game "
+                                     "freeze at startup.", mod_fixes(m, has_update), severity="medium", auto=False))
+    if crash and crash.get("crashed"):
+        probs += recent_hand_installed(store)
     if crash and crash.get("crashed") and not any(p["severity"] == "high" for p in probs):
         probs.append(changed_since_good(store))
     return probs + archive_conflicts(store)

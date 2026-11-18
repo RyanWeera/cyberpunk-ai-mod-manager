@@ -36,6 +36,16 @@ class Window(unittest.TestCase):
     def tab_text(self, name):
         return self.app.tabs.tab(self.app.tab[name], "text")
 
+    def test_style_switch_recolors_and_is_kept(self):
+        self.addCleanup(ui.use_theme, "Cyberpunk")  # colours are module globals shared by every test
+        self.assertEqual(self.store.settings["theme"], "Cyberpunk")
+        self.app.theme_var.set("Arasaka")
+        self.app.set_theme()
+        self.assertEqual(self.store.settings["theme"], "Arasaka")
+        self.assertEqual(ui.ACCENT, ui.THEMES["Arasaka"]["ACCENT"])
+        self.assertEqual(self.app.prob_detail.cget("bg"), ui.THEMES["Arasaka"]["PANEL"])
+        self.assertEqual(Store(self.tmp / "data").settings["theme"], "Arasaka")  # saved for the next start
+
     def test_first_run_shows_setup_and_empty_state(self):
         app = self.app
         self.assertEqual(self.tab_text("Mods"), "Mods (0)")

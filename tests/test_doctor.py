@@ -1,13 +1,17 @@
+import os
 import struct
+import subprocess
+import sys
 import tempfile
+import threading
 import time
 import unittest
 from collections import Counter
 from pathlib import Path
 from unittest import mock
 
-from crash_doctor import doctor
-from crash_doctor.watch import dump_module, parse_events
+from crash_doctor import doctor, watch
+from crash_doctor.watch import dump_module, parse_events, read_dump
 from shared.store import Store
 from tests.helpers import fake_game, mod, rdar, stage
 
@@ -24,6 +28,37 @@ Event[1]
 Faulting application name: pythonw.exe, version: 3.12
 Faulting module path: C:\\x\\torch.dll
 """
+
+
+def minidump(modules, crash_addr, stack_words, tid=7, code=0xC0000005, more_threads=()):
+    """A small minidump: exception (none when crash_addr is None, like a freeze snapshot), module list, and thread `tid`
+    whose stack holds stack_words, then more_threads [(tid, words)]. modules: [(base, size, path)]."""
+    threads = [(tid, stack_words), *more_threads]
+    n = 3 if crash_addr is not None else 2
+    exc = 32 + 12 * n
+    ml = exc + (32 if crash_addr is not None else 0)
+    names_off = ml + 4 + 108 * len(modules)
+    names, rvas = b"", []
+    for _, _, path in modules:
+        e = path.encode("utf-16-le")
+        rvas.append(names_off + len(names))
+        names += struct.pack("<I", len(e)) + e
+    tl = names_off + len(names)
+    mem = tl + 4 + 48 * len(threads)
+    stacks, entries = b"", b""
+    for t, words in threads:
+        st = struct.pack(f"<{len(words)}Q", *words)
+        entries += struct.pack("<IIIIQQII", t, 0, 0, 0, 0, 0, len(st), mem + len(stacks)) + b"\0" * 8
+        stacks += st
+    head = struct.pack("<4sIIIIIQ", b"MDMP", 0, n, 32, 0, 0, 0)
+    if crash_addr is not None:
+        head += struct.pack("<III", 6, 32, exc)
+    head += struct.pack("<III", 4, tl - ml, ml) + struct.pack("<III", 3, mem - tl, tl)
+    if crash_addr is not None:
+        head += struct.pack("<IIIIQQ", tid, 0, code, 0, 0, crash_addr)
+    return (head + struct.pack("<I", len(modules)) + b"".join(struct.pack("<QIIII", b, n, 0, 0, r) + b"\0" * 84
+                                                               for (b, n, _), r in zip(modules, rvas))
+            + names + struct.pack("<I", len(threads)) + entries + stacks)
 
 
 class Doctor(unittest.TestCase):
@@ -171,6 +206,150 @@ class Doctor(unittest.TestCase):
         self.assertEqual(dump_module(p), "C:\\G\\red4ext\\plugins\\Bad\\Bad.dll")
         p.write_bytes(b"junk")
         self.assertIsNone(dump_module(p))
+
+    def test_call_path_names_mods_on_the_crashing_stack(self):
+        exe = f"{self.game}\\bin\\x64\\Cyberpunk2077.exe"
+        mods = [(0x1000, 0x1000, exe), (0x5000, 0x100, f"{self.game}\\red4ext\\plugins\\Bad Plugin\\Bad.dll"),
+                (0x9000, 0x100, f"{self.game}\\bin\\x64\\version.dll")]
+        p = Path(tempfile.mkdtemp()) / "minidump.dmp"
+        p.write_bytes(minidump(mods, 0x1010, [0x123, 0x9010, 0x1500, 0x5010, 0x9020]))
+        d = read_dump(p)
+        self.assertEqual(d["module"], exe)
+        self.assertEqual(d["code"], 0xC0000005)
+        self.assertEqual([m.rsplit("\\", 1)[1] for m in d["stack"]], ["version.dll", "Cyberpunk2077.exe", "Bad.dll"])  # newest call first
+        probs = {p["id"]: p for p in doctor.diagnose(self.store, 0, {"crashed": True, **d})}
+        self.assertEqual(probs["stack-cet"]["severity"], "high")  # ran last before the crash: main suspect
+        self.assertEqual(probs["stack-bad"]["severity"], "medium")
+        self.assertFalse(probs["stack-cet"]["auto"])  # a stack hint never disables a mod by itself
+        self.assertNotIn("unknown", probs)
+        self.assertIn("Where: version.dll+0x10", probs["stack-cet"]["detail"])  # where in the module: an offset its author can look up
+
+    def test_freeze_snapshot_blames_mod_code_on_the_main_thread(self):
+        mods = [(0x1000, 0x1000, f"{self.game}\\bin\\x64\\Cyberpunk2077.exe"),
+                (0x5000, 0x100, f"{self.game}\\red4ext\\plugins\\Bad Plugin\\Bad.dll"),
+                (0x9000, 0x100, f"{self.game}\\bin\\x64\\version.dll")]
+        p = Path(tempfile.mkdtemp()) / "freeze.dmp"
+        p.write_bytes(minidump(mods, None, [0x1010, 0x5020], more_threads=[(8, [0x9010]), (9, [0x5030])]))
+        hang = read_dump(p)
+        self.assertIsNone(hang["module"])  # a snapshot has no crash
+        self.assertEqual([m.rsplit("\\", 1)[1] for m in hang["stack"]], ["Cyberpunk2077.exe", "Bad.dll"])
+        self.assertEqual([m.rsplit("\\", 1)[1] for m in hang["others"]], ["version.dll"])  # Bad.dll is already on the main thread
+        probs = {p["id"]: p for p in doctor.diagnose(self.store, 0, {"crashed": True, "hang": hang})}
+        self.assertEqual(probs["freeze-bad"]["title"], f"{self.store.mod('bad')['name']} was running when the game froze")
+        self.assertIn(self.store.mod("cet")["name"], probs["freeze-bad"]["detail"])  # other threads are named, not blamed
+        p.write_bytes(minidump(mods, None, [0x1010], more_threads=[(8, [0x9010])]))
+        probs = {p["id"]: p for p in doctor.diagnose(self.store, 0, {"crashed": True, "hang": read_dump(p)})}
+        self.assertEqual(probs["freeze"]["fixes"][0]["action"], ["bisect_start"])  # no mod code on the main thread
+
+    def test_watch_snapshots_a_freeze_and_drops_it_when_the_game_comes_back(self):
+        for recovers, clean_exit in ((False, False), (True, False), (False, True)):
+            states = iter([True, True, True] + ([False] if recovers else [True]) + [True] * 5)
+            waits = iter([watch.WAIT_TIMEOUT] * 6 + [0])
+            clock = iter(range(0, 10_000, 10))
+            k32 = mock.Mock()
+            k32.OpenProcess.return_value = 1
+            k32.WaitForSingleObject.side_effect = lambda h, ms, waits=waits: next(waits)
+            k32.GetExitCodeProcess.return_value = 0  # Windows gave no exit code
+            if clean_exit:
+                k32.GetExitCodeProcess.side_effect = lambda h, ref: 1  # exit code 0
+            snap = Path(tempfile.mkdtemp()) / "freeze-1.dmp"
+            snap.write_bytes(b"MDMP")
+            stop, seen = threading.Event(), []
+
+            def done(started, code, freeze, seen=seen, stop=stop):
+                seen.append(freeze)
+                stop.set()
+
+            with mock.patch.object(watch, "kernel32", return_value=k32), mock.patch.object(watch, "find_pid", return_value=42), \
+                    mock.patch.object(watch, "hung", side_effect=lambda pid, states=states: next(states)), \
+                    mock.patch.object(watch, "write_dump", return_value=snap) as dump, \
+                    mock.patch.object(watch.time, "time", side_effect=lambda clock=clock: next(clock)):
+                watch.watch(lambda t: None, done, stop, interval=0, hang_dir=snap.parent)
+            dump.assert_called_once_with(42, snap.parent)  # one snapshot per freeze, after HANG_AFTER seconds
+            kept = not recovers and not clean_exit  # a long load or a slow clean quit is no freeze: its snapshot is deleted
+            self.assertEqual(seen, [snap] if kept else [None])
+            self.assertEqual(snap.exists(), kept)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows only")
+    def test_real_snapshot_of_a_hung_window(self):
+        proc = subprocess.Popen([sys.executable, "-c", "import tkinter, time; r = tkinter.Tk(); r.update(); time.sleep(60)"])
+        self.addCleanup(proc.wait)
+        self.addCleanup(proc.kill)
+        for _ in range(40):  # Windows calls a window "Not responding" after 5 s without messages
+            if watch.hung(proc.pid):
+                break
+            time.sleep(0.5)
+        else:
+            self.fail("the window never became hung")
+        folder = Path(tempfile.mkdtemp())
+        snap = watch.write_dump(proc.pid, folder)
+        self.assertTrue(snap and snap.exists())
+        hang = read_dump(snap)
+        self.assertIsNone(hang["module"])
+        self.assertTrue(any(m.lower().endswith(".dll") for m in hang["stack"] + hang["others"]), hang)
+        self.assertFalse(watch.hung(os.getpid()))  # this test process has no hung window
+
+    def test_hand_installed_mods(self):
+        self.write("archive/pc/mod/handmade.archive", "x")
+        self.write("red4ext/plugins/Manual/Manual.dll", "x")
+        self.write("r6/scripts/Fancy HUD/other.reds", "x")  # a folder this app installed: not by hand
+        hand = [rel for rel, _ in doctor.hand_installed(self.store)]
+        self.assertEqual(sorted(hand), ["archive/pc/mod/handmade.archive", "red4ext/plugins/Manual"])
+        probs = {p["id"]: p for p in doctor.diagnose(self.store, 0, {"crashed": True})}
+        [pid] = [i for i in probs if i.startswith("manual-")]
+        self.assertIn("handmade.archive", probs[pid]["detail"])
+        self.store.doctor["ignored"] = [pid]
+        self.assertFalse([p for p in doctor.diagnose(self.store, 0, {"crashed": True}) if p["id"] == pid])
+
+    def test_game_update_since_last_good_launch(self):
+        self.assertEqual(doctor.game_updated(self.store), [])  # no good launch on record
+        self.store.doctor["last_good_game"] = "2.3"
+        with mock.patch.object(doctor, "game_version", return_value="2.3"):
+            self.assertEqual(doctor.game_updated(self.store), [])
+        with mock.patch.object(doctor, "game_version", return_value="2.31"):
+            [p] = doctor.game_updated(self.store, lambda m: m["id"] == "cet")
+        self.assertEqual(p["fixes"][0]["action"], ["update", "cet"])
+        self.assertEqual(p["severity"], "high")
+        self.assertIn("2.3 -> 2.31", p["detail"])
+
+    def test_slow_dll_mod_from_red4ext_log(self):
+        self.write("red4ext/logs/red4ext.log",
+                   "[2026-11-19 10:00:00.000] [RED4ext] [info] Loading plugins...\n"
+                   f"[2026-11-19 10:00:00.100] [RED4ext] [info] Loading plugin from '{self.game}\\red4ext\\plugins\\Bad Plugin\\Bad.dll'...\n"
+                   "[2026-11-19 10:00:07.600] [RED4ext] [info] Bad (version: 1.0) has been loaded\n"
+                   f"[2026-11-19 10:01:00.000] [RED4ext] [info] Loading plugin from '{self.game}\\red4ext\\plugins\\Bad Plugin\\Bad.dll'...\n"
+                   "[2026-11-19 11:00:00.000] [RED4ext] [info] Game closed\n")  # an hour: a quiet log, not a slow load
+        self.assertEqual(doctor.slow_mods(self.game, 0, doctor.owner_index(self.store)), {"bad": 7.5})
+        self.assertIn("slow-bad", [p["id"] for p in doctor.diagnose(self.store)])
+
+    def test_report_hides_this_pc_paths(self):
+        crash = {"crashed": True, "exit_code": 0xC0000005, "code": 0xC0000005,
+                 "module": f"{self.game}\\red4ext\\plugins\\Bad Plugin\\Bad.dll",
+                 "stack": [f"{str(self.game).upper()}\\bin\\x64\\x.dll"]}  # Windows paths may differ in case
+        text = doctor.report(self.store, doctor.diagnose(self.store, 0, crash), crash)
+        self.assertNotIn(str(self.game).lower(), text.lower())
+        self.assertNotIn(os.path.expanduser("~"), text)
+        self.assertIn("<game>\\red4ext\\plugins\\Bad Plugin\\Bad.dll", text)
+        self.assertIn("Exit code: 0xC0000005", text)
+        self.assertIn(self.store.mod("bad")["name"], text)
+
+    def test_crash_code_in_plain_words(self):
+        crash = {"crashed": True, "module": f"{self.game}\\red4ext\\plugins\\Bad Plugin\\Bad.dll", "code": 0xC0000005}
+        probs = {p["id"]: p for p in doctor.diagnose(self.store, 0, crash)}
+        self.assertIn("memory it does not own", probs["crash-bad"]["detail"])
+
+    def test_advanced_crash_reporter_report(self):
+        self.write(f"{doctor.ACR}/report-1.txt", f"SUMMARY\nLikely cause: {self.game}\\red4ext\\plugins\\Bad Plugin\\Bad.dll\n"
+                                                 "INSTALLED MODS\nr6/scripts/Fancy HUD/hud.reds\n")
+        ids = [p["id"] for p in doctor.diagnose(self.store, 0, {"crashed": True})]
+        self.assertIn("acr-bad", ids)
+        self.assertNotIn("acr-fancy", ids)  # the installed-mod list is not a verdict
+        (self.game / doctor.ACR / "report-1.txt").unlink()
+        self.write(f"{doctor.ACR}/report-2.txt", "SUMMARY\nNo mod found\nINSTALLED MODS\nr6/scripts/Fancy HUD/hud.reds\n")
+        probs = {p["id"]: p for p in doctor.diagnose(self.store, 0, {"crashed": True})}
+        self.assertEqual(probs["acr-report-2.txt"]["severity"], "info")
+        self.store.doctor["ignored"] = ["acr-report-2.txt"]
+        self.assertNotIn("acr-report-2.txt", [p["id"] for p in doctor.diagnose(self.store, 0, {"crashed": True})])
 
     def test_parse_events_only_game(self):
         [(module, started)] = parse_events(EVENTS.format(game="C:\\G"))
