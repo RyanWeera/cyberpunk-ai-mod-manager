@@ -136,15 +136,16 @@ def watch(on_start, on_exit, stop, interval=5, hang_dir=None):
 
 
 def parse_events(text):
-    """[(faulting module path or '' for hangs, process start as unix time or None)] for game crash events
-    in `wevtutil /f:text` output."""
+    """[(faulting module path or '' for hangs, process start as unix time or None, fault offset or None)] for game
+    crash events in `wevtutil /f:text` output."""
     out = []
     for block in text.split("Event[")[1:]:
         if f"application name: {EXE.lower()}" in block.lower() or f"program {EXE.lower()}" in block.lower():
             m = re.search(r"Faulting module path:\s*(.+)", block)
             s = re.search(r"(?:application start time|Start Time):\s*(?:0x)?([0-9a-fA-F]{8,})", block)
             started = (int(s[1], 16) - 116444736000000000) / 1e7 if s else None  # FILETIME -> unix
-            out.append((m[1].strip() if m else "", started))
+            o = re.search(r"Fault offset:\s*0x([0-9a-fA-F]+)", block)
+            out.append((m[1].strip() if m else "", started, int(o[1], 16) if o else None))
     return out
 
 
@@ -183,6 +184,7 @@ def read_dump(path):
     stack: modules on the crashing thread's stack (on the main thread in a freeze snapshot), newest call first
     others: modules on the other threads' stacks (freeze snapshots only)
     places: {module path: "Name.dll+0xOFFSET (function)"} where the crash happened and where each stack module was found
+    fault: crash ID "Name.dll+0xOFFSET" of the crashing instruction, or None
     or None when the file is no minidump."""
     try:
         b = Path(path).read_bytes()
@@ -229,7 +231,8 @@ def read_dump(path):
             stacks.append(hits)
         stack = stacks[0] if stacks else []
         others = list(dict.fromkeys(m for hits in stacks[1:] for m in hits if m not in stack))
-        return {"module": module, "code": code, "stack": stack, "others": others, "places": places}
+        fault = places[module].split(" (")[0] if module else None
+        return {"module": module, "code": code, "stack": stack, "others": others, "places": places, "fault": fault}
     except (OSError, struct.error, UnicodeDecodeError):
         return None
 
@@ -237,6 +240,11 @@ def read_dump(path):
 def dump_module(path):
     """Path of the module the crash happened in, read from a minidump (.dmp), or None."""
     return (read_dump(path) or {}).get("module")
+
+
+def fault_id(module, offset):
+    """Short crash ID, the same for every crash at the same instruction: 'Bad.dll+0x10'."""
+    return f"{Path(module.replace(chr(92), '/')).name}+0x{offset:X}"
 
 
 def _mtime(p):
@@ -259,14 +267,16 @@ def crash_evidence(since, exit_code=None, tries=4, lag=10):
                                  text=True, errors="replace", creationflags=NO_WINDOW, timeout=60).stdout
         except subprocess.TimeoutExpired:
             out = ""
-        events = [mod for mod, started in parse_events(out) if started is None or started >= since - lag]
+        events = [(mod, off) for mod, started, off in parse_events(out) if started is None or started >= since - lag]
         rq = Path(os.environ.get("LOCALAPPDATA", ""), "REDEngine/ReportQueue")
         reports = [p for p in rq.glob("*") if _mtime(p) >= since] if rq.is_dir() else []
         dump = next((d for rep in reports for f in rep.rglob("*.dmp") if (d := read_dump(f))), {})
-        module = next((e for e in events if e), None) or dump.get("module")
+        hit = next((e for e in events if e[0]), None)
+        module = hit[0] if hit else dump.get("module")
+        fault = fault_id(*hit) if hit and hit[1] is not None else dump.get("fault") if module == dump.get("module") else None
         crashed = bad_exit or bool(events or reports)
         if module or attempt == tries - 1 or (not crashed and attempt >= 1):
             return {"crashed": crashed, "module": module, "report": str(reports[0]) if reports else None, "exit_code": exit_code,
                     "code": dump.get("code") or (exit_code if bad_exit else None), "stack": dump.get("stack", []),
-                    "places": dump.get("places", {})}
+                    "places": dump.get("places", {}), "fault": fault}
         time.sleep(2.5)

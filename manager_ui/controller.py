@@ -561,17 +561,26 @@ class Controller:
         if freeze:  # the game stopped responding and never came back: the user closed it, or the game's own timer did
             ev.update(crashed=True, hang=watch.read_dump(freeze))
             self.notify("log", f"The game froze. I saved a snapshot of its threads: {freeze}")
+        secs = time.time() - started
+        if ev["crashed"]:
+            saved = doctor.keep_logs(self.store, started, ev.get("report"))  # the game deletes old logs
+            ev["saved"] = str(saved) if saved else None
         with self.store.lock:
+            if ev["crashed"]:
+                self.store.doctor["crashes"] = (self.store.doctor.get("crashes", []) +
+                                                [{"time": time.time(), "fault": ev.get("fault"), "secs": int(secs)}])[-50:]
             self.store.doctor["last_exit"] = ev  # for the crash report, also after the app restarts
             try:
                 self.store.save()
             except OSError as e:
                 self.notify("log", f"Could not save the crash details: {e}")
         if self.store.doctor.get("bisect"):
-            return self._bisect_result(ev["crashed"])
+            return self._bisect_result(ev["crashed"], secs)
         if not ev["crashed"]:
+            noisy = doctor.noisy_mods(self.store, started)  # errors in a launch that worked are not what crashes the game
             with self.store.lock:
                 self.store.doctor["last_good"] = {m["id"]: m.get("version", "") for m in self.store.enabled()}
+                self.store.doctor["clean_errors"] = (self.store.doctor.get("clean_errors", []) + [noisy])[-3:]
                 if game := self.store.game():
                     self.store.doctor["last_good_game"] = doctor.game_version(game)
                 self.store.save()
@@ -579,10 +588,10 @@ class Controller:
         self.notify("log", "The game crashed. Looking for the cause...")
         self.handle_problems(doctor.diagnose(self.store, started, ev, self.has_update), crashed=True)
 
-    def crash_report(self):
-        """Text of a report about the last game exit and the current mods, to share with a mod author."""
+    def crash_report(self, for_ai=False):
+        """Text of a report about the last game exit and the current mods, to share with a mod author or an AI chat."""
         since, ev = self.store.doctor.get("last_launch", 0), self.store.doctor.get("last_exit")
-        return doctor.report(self.store, doctor.diagnose(self.store, since, ev, self.has_update), ev)
+        return doctor.report(self.store, doctor.diagnose(self.store, since, ev, self.has_update), ev, for_ai)
 
     def check_now(self):
         since = self.store.doctor.get("last_launch", 0)
@@ -747,7 +756,7 @@ class Controller:
                            "Start the game and play until it crashes, or quit normally if it does not.")
 
     def _bisect_apply(self, state):
-        off = set(state["suspects"]) - set(state["testing"])
+        off = doctor.bisect_off(state)
         with self.store.lock:
             for m in self.store.mods:
                 if m["id"] in state["restore"]:
@@ -764,9 +773,13 @@ class Controller:
             self._bisect_apply({"suspects": [], "testing": [], "restore": state["restore"]})
             self.notify("log", "Bad-mod search stopped. Your mods are back as they were.")
 
-    def _bisect_result(self, crashed):
+    def _bisect_result(self, crashed, secs=0):
+        need = self.store.doctor["bisect"].get("crash_secs", 0)
+        if not crashed and secs < need:
+            return self.notify("log", f"The game ran {int(secs)} seconds without a crash, but the crash came after {int(need)} seconds "
+                                      "before. This start does not count. Start the game again and play longer before you quit.")
         with self.store.lock:
-            state = doctor.bisect_step(self.store.doctor["bisect"], crashed)
+            state = doctor.bisect_step(self.store.doctor["bisect"], crashed, secs)
             if "culprit" not in state:
                 self.store.doctor["bisect"] = state
             else:

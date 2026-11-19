@@ -929,7 +929,12 @@ class App:
             ("Find the bad mod for me", self.bisect_begin, "Turns half the mods off for each game start until the mod that crashes the game is found."),
             ("Stop the search", self.bisect_cancel, "Stop the bad-mod search and turn your mods back on."),
             ("Save crash report", self.save_report, ("Save a text file about the last crash or freeze and your mods, to share with "
-                                                     "a mod author. Folder paths of this PC are hidden."))]).pack(fill="x", pady=8)
+                                                     "a mod author. Folder paths of this PC are hidden."))]).pack(fill="x", pady=(8, 4))
+        self._buttons(f, [
+            ("Copy for an AI", self.copy_report, "Copies the crash report as a question for ChatGPT, Claude or another AI chat. "
+                                                 "Nothing is sent anywhere; it only goes to your clipboard. Folder paths are hidden."),
+            ("Open saved crash logs", self.open_crash_logs, "After each crash I keep a zip of the crash report and the mod logs, "
+                                                            "because the game deletes old logs.")]).pack(fill="x", pady=(0, 8))
         hist = ttk.Frame(f)  # packed at the bottom first, so the problem list cannot squeeze it out
         hist.pack(side="bottom", fill="x")
         head = ttk.Frame(hist)
@@ -1575,6 +1580,17 @@ class App:
         except OSError as e:
             return messagebox.showerror("Save crash report", f"Could not save the report: {e}")
         self.say(f"Crash report saved: {path}")
+
+    def copy_report(self):
+        self.root.clipboard_clear()
+        self.root.clipboard_append(self.ctl.crash_report(for_ai=True))
+        self.say("Report copied. Paste it into an AI chat.")
+
+    def open_crash_logs(self):
+        d = self.store.root / "crash_logs"
+        if not d.is_dir():
+            return self.say("No crash logs are saved yet. I save them after each crash.")
+        os.startfile(d)
 
     def bisect_begin(self):
         if messagebox.askyesno("Find the bad mod", "I will turn half of your mods off. Start the game and play until it crashes, "

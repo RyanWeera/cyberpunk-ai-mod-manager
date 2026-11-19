@@ -11,9 +11,11 @@ import os
 import re
 import struct
 import time
+import zipfile
 from collections import Counter
 from datetime import datetime
 from itertools import combinations, pairwise
+from pathlib import Path
 
 from downloads.fetch import FRAMEWORKS, FW_BY_NEXUS
 
@@ -22,6 +24,7 @@ ERR = re.compile(r"(?i)\b(error|critical|fatal|exception|failed)\b")
 PATH = re.compile(r"(?:^|[\s'\"(\[=])((?:archive|bin|engine|r6|red4ext|mods)/[^:'\"()<>|*?,\r\n]+)")
 ARCH = re.compile(r"([^\s/:'\"]+\.archive)\b")
 ACR = "bin/x64/plugins/AdvancedCrashReporter/reports"  # reports of the Advanced Crash Reporter mod, when it is installed
+ACR_NEXUS = 34403  # its Nexus mod id: offered after a crash with no clue
 CODES = {  # Windows exception codes in plain words
     0xC0000005: "Code 0xC0000005: the game read or wrote memory it does not own. A DLL mod made for another game version "
                 "often causes this.",
@@ -252,11 +255,7 @@ def best_order(store, after=()):
                 todo += beats[x]
         beats[lo].add(hi)
 
-    nexus = {}
-    for m in mods:
-        if m["source"]["type"] == "nexus":
-            nexus.setdefault(m["source"]["mod_id"], []).append(m["id"])
-    rules = [(rid, m["id"]) for m in mods for r in m.get("requires", []) for rid in nexus.get(r["mod_id"], [])]
+    rules = requires_pairs(mods)
     sizes, pairs = overlaps(store)
     kept = set(store.doctor.get("ignored", []))
     rules += [(a, b) if f"conflict-{a}-{b}" in kept else (b, a) for a, b in pairs
@@ -440,10 +439,14 @@ def slow_mods(game, since, idx, limit=SLOW):
     return found
 
 
-def report(store, probs, crash=None):
-    """Plain-text report to share with a mod author. Folder paths of this PC are hidden."""
+AI_ASK = ("My modded Cyberpunk 2077 crashes. Below is what my mod manager found. Tell me which mod to test first and why. "
+          "Use only the mod names in this report, and do not invent mods or fixes.")
+
+
+def report(store, probs, crash=None, for_ai=False):
+    """Plain-text report to share with a mod author, or (for_ai) to paste into an AI chat. Folder paths of this PC are hidden."""
     game = store.game()
-    out = [f"Cyberpunk 2077 AI Mod Manager crash report, {time.strftime('%Y-%m-%d %H:%M')}"]
+    out = ([AI_ASK, ""] if for_ai else []) + [f"Cyberpunk 2077 AI Mod Manager crash report, {time.strftime('%Y-%m-%d %H:%M')}"]
     if game:
         out.append(f"Game version: {game_version(game)}")
     if crash:
@@ -460,6 +463,10 @@ def report(store, probs, crash=None):
                 out += [f"  {(ev.get('places') or {}).get(m, '')}  {m}" for m in ev["stack"]]
         if (crash.get("hang") or {}).get("others"):
             out.append("Other threads at the freeze: " + ", ".join(crash["hang"]["others"]))
+    crashes = store.doctor.get("crashes", [])[-5:]
+    if crashes:
+        out += ["", "== RECENT CRASHES =="] + [f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(c['time']))}  "
+                                              f"{c.get('fault') or 'no crash ID'}, after {c.get('secs', 0) // 60} min" for c in crashes]
     out += ["", "== PROBLEMS FOUND =="] + ([f"[{p['severity']}] {p['title']}\n  " + p["detail"].replace("\n", "\n  ") for p in probs] or ["None"])
     out += ["", "== MODS IN LOAD ORDER (lower wins) =="]
     out += [f"{'on ' if m['enabled'] else 'off'}  {m['name']}  {m.get('version', '')}" for m in store.mods]
@@ -468,7 +475,8 @@ def report(store, probs, crash=None):
         out += ["", "== MODS INSTALLED BY HAND =="]
         out += [f"{time.strftime('%Y-%m-%d', time.localtime(t))}  {rel}" for rel, t in hand]
     text = "\n".join(out) + "\n"
-    for path, name in ((str(game) if game else None, "<game>"), (os.path.expanduser("~"), "%USERPROFILE%")):
+    for path, name in ((str(game) if game else None, "<game>"), (str(store.root), "<data folder>"),
+                       (os.path.expanduser("~"), "%USERPROFILE%")):
         for p in {path, path.replace("\\", "/")} if path else ():
             text = re.sub(re.escape(p), name, text, flags=re.IGNORECASE)  # Windows paths may differ in case
     return text
@@ -509,10 +517,17 @@ def diagnose(store, since=0.0, crash=None, has_update=None):
                 probs.append(problem(pid, "Advanced Crash Reporter wrote a report", detail, [fix("Hide this report", "ignore", pid)],
                                      severity="info", auto=False))
     if game:
+        clean = store.doctor.get("clean_errors", [])
+        noise = {x for run in clean for x in run} if len(clean) >= 2 else set()  # two clean launches before ruling out
         # `since` is when polling saw the game (up to one poll late): look a little further back for early log lines
         for mid, hit in log_errors(game, since - 15 if since else 0, idx).items():
             m = store.mod(mid)
             if mid in blamed or not m:
+                continue
+            if mid in noise:
+                probs.append(problem(f"log-{mid}", f"{m['name']} reported errors, also in launches without a crash",
+                                     "Probably not the cause: this mod also logs errors in launches that ended normally.\n\n"
+                                     + "\n".join(hit["lines"]), mod_fixes(m, has_update), severity="info", auto=False))
                 continue
             probs.append(problem(f"log-{mid}", f"{m['name']} reported errors", "\n".join(hit["lines"]), mod_fixes(m, has_update),
                                  severity="high" if hit["strong"] else "medium", auto=hit["strong"]))
@@ -526,18 +541,112 @@ def diagnose(store, since=0.0, crash=None, has_update=None):
         probs += recent_hand_installed(store)
     if crash and crash.get("crashed") and not any(p["severity"] == "high" for p in probs):
         probs.append(changed_since_good(store))
+        if game and not (game / ACR).parent.is_dir():
+            probs[-1]["fixes"].append(fix("Install Advanced Crash Reporter (its next crash report names the mod whose code ran)",
+                                          "queue_nexus", ACR_NEXUS))
+    if crash and crash.get("crashed") and (notes := crash_notes(store, crash)) and probs:
+        target = next((p for p in probs if p["id"].split("-")[0] in ("crash", "stack", "freeze", "acr", "log", "unknown")), probs[0])
+        target["detail"] += "\n\n" + notes
     return probs + archive_conflicts(store)
 
 
+def crash_notes(store, crash):
+    """The crash ID and how often it happened, and where the crash logs were saved."""
+    notes = []
+    if crash.get("fault"):
+        same = [c["time"] for c in store.doctor.get("crashes", []) if c.get("fault") == crash["fault"]]
+        notes.append(f"Crash ID: {crash['fault']}. " + (f"The same crash happened {len(same)} times since "
+                     f"{time.strftime('%d %b', time.localtime(min(same)))}." if len(same) > 1 else "This crash is new."))
+    if crash.get("saved"):
+        notes.append(f"Crash logs saved in {crash['saved']}")
+    return "\n\n".join(notes)
+
+
+def noisy_mods(store, since):
+    """Ids of mods that logged errors in a launch that ended without a crash."""
+    game = store.game()
+    return sorted(log_errors(game, since - 15 if since else 0, owner_index(store))) if game else []
+
+
+def keep_logs(store, since, report=None, keep=10, limit=20_000_000):
+    """Zip this crash's REDEngine report and the mod logs written since `since` into the data folder, because the
+    game deletes old logs. Keeps the newest `keep` zips. Returns the zip path, or None."""
+    game, files, out = store.game(), [], store.root / "crash_logs"
+    try:
+        if report:
+            r = Path(report)
+            files += [(p, "report/" + p.relative_to(r.parent).as_posix()) for p in ([r] if r.is_file() else r.rglob("*")) if p.is_file()]
+        if game:
+            files += [(p, p.relative_to(game).as_posix()) for base in LOGS if (game / base).is_dir()
+                      for p in (game / base).rglob("*.log") if p.stat().st_mtime >= since - 15]
+        if not files:
+            return None
+        out.mkdir(exist_ok=True)
+        z = out / time.strftime("crash-%Y%m%d-%H%M%S.zip")
+        with zipfile.ZipFile(z, "w", zipfile.ZIP_DEFLATED) as zf:
+            for p, name in files:
+                try:
+                    with open(p, "rb") as fh:
+                        size = os.fstat(fh.fileno()).st_size
+                        if size > limit and p.suffix != ".log":
+                            continue
+                        fh.seek(max(0, size - limit))  # only the end of a huge log
+                        zf.writestr(name, fh.read())
+                except OSError:  # the game or the reporter can still hold or delete a file
+                    continue
+        for old in sorted(out.glob("crash-*.zip"))[:-keep]:
+            old.unlink(missing_ok=True)
+    except OSError:
+        return None
+    return z
+
+
+def requires_pairs(mods):
+    """(required mod id, mod id that needs it) from the Nexus requirements of `mods`."""
+    nexus = {}
+    for m in mods:
+        if m["source"]["type"] == "nexus":
+            nexus.setdefault(m["source"]["mod_id"], []).append(m["id"])
+    return [(rid, m["id"]) for m in mods for r in m.get("requires", []) for rid in nexus.get(r["mod_id"], [])]
+
+
 def bisect_start(store):
-    suspects = [m["id"] for m in store.enabled() if not m.get("framework")]
-    return {"suspects": suspects, "testing": suspects[: (len(suspects) + 1) // 2], "restore": [m["id"] for m in store.enabled()]}
+    """Suspects come after the mods they require, so every first half (`testing`) holds what its mods need."""
+    on = store.enabled()
+    needs = {}
+    for req, mid in requires_pairs(on):
+        needs.setdefault(mid, []).append(req)
+    order, seen, fw = [], set(), {m["id"] for m in on if m.get("framework")}
+
+    def visit(mid):
+        if mid not in seen:
+            seen.add(mid)
+            for r in needs.get(mid, []):
+                visit(r)
+            order.append(mid)
+    for m in on:
+        visit(m["id"])
+    suspects = [x for x in order if x not in fw]
+    last = (store.doctor.get("crashes") or [{}])[-1]
+    return {"suspects": suspects, "testing": suspects[: (len(suspects) + 1) // 2], "restore": [m["id"] for m in on],
+            "needs": needs, "crash_secs": last.get("secs", 0)}
 
 
-def bisect_step(state, crashed):
+def bisect_off(state):
+    """Mods to turn off for this launch: the suspects not tested, and every mod that needs one of them,
+    so the game can still start."""
+    off, needs = set(state["suspects"]) - set(state["testing"]), state.get("needs", {})
+    while more := {m for m, rs in needs.items() if m not in off and off.intersection(rs)}:
+        off |= more
+    return off
+
+
+def bisect_step(state, crashed, secs=0):
     """Next state after one launch. Only `testing` suspects are on; a crash means the bad mod is among them.
     A mod found only by elimination (no crash seen during the search) is confirmed by one more launch with
-    every mod on; if that launch does not crash either, there is no single bad mod (culprit None)."""
+    every mod on; if that launch does not crash either, there is no single bad mod (culprit None).
+    `crash_secs` is the longest time to a crash seen: a launch without a crash must run longer to count."""
+    state = {**state, "crash_secs": max(state.get("crash_secs", 0), secs if crashed else 0)}
     crashes = state.get("crashes", 0) + bool(crashed)
     if state.get("verifying"):
         return {**state, "crashes": crashes, "culprit": state["suspects"][0] if crashed else None}

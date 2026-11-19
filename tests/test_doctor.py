@@ -6,12 +6,13 @@ import tempfile
 import threading
 import time
 import unittest
+import zipfile
 from collections import Counter
 from pathlib import Path
 from unittest import mock
 
 from crash_doctor import doctor, watch
-from crash_doctor.watch import dump_module, parse_events, read_dump
+from crash_doctor.watch import dump_module, fault_id, parse_events, read_dump
 from shared.store import Store
 from tests.helpers import fake_game, mod, rdar, stage
 
@@ -21,6 +22,7 @@ EVENTS = """Event[0]
 Faulting application name: Cyberpunk2077.exe, version: 2.3.0.0, time stamp: 0x1
 Faulting module name: Bad.dll, version: 1.0.0.0
 Faulting process id: 0x1
+Fault offset: 0x0000000000001a2b
 Faulting application start time: 0x1DD6CEF3291ECD2
 Faulting module path: {game}\\red4ext\\plugins\\Bad Plugin\\Bad.dll
 Event[1]
@@ -204,6 +206,8 @@ class Doctor(unittest.TestCase):
         p = Path(tempfile.mkdtemp()) / "minidump.dmp"
         p.write_bytes(blob)
         self.assertEqual(dump_module(p), "C:\\G\\red4ext\\plugins\\Bad\\Bad.dll")
+        self.assertEqual(read_dump(p)["fault"], "Bad.dll+0x10")
+        self.assertEqual(fault_id("C:\\G\\Bad.dll", 0x10), "Bad.dll+0x10")  # the same ID from a Windows crash event
         p.write_bytes(b"junk")
         self.assertIsNone(dump_module(p))
 
@@ -351,8 +355,68 @@ class Doctor(unittest.TestCase):
         self.store.doctor["ignored"] = ["acr-report-2.txt"]
         self.assertNotIn("acr-report-2.txt", [p["id"] for p in doctor.diagnose(self.store, 0, {"crashed": True})])
 
+    def test_errors_seen_in_clean_launches_are_not_blamed(self):
+        self.write("r6/logs/redscript_rCURRENT.log", f"[ERROR - Mon] At {self.game}\\r6\\scripts\\Fancy HUD\\hud.reds:12:5:\n")
+        crash = {"crashed": True, "module": None}
+        self.store.doctor["clean_errors"] = [["fancy"]]  # one clean launch is not enough to rule a mod out
+        p = next(p for p in doctor.diagnose(self.store, 0, crash) if p["id"] == "log-fancy")
+        self.assertEqual((p["severity"], p["auto"]), ("high", True))
+        self.store.doctor["clean_errors"] = [["fancy"], []]
+        p = next(p for p in doctor.diagnose(self.store, 0, crash) if p["id"] == "log-fancy")
+        self.assertEqual((p["severity"], p["auto"]), ("info", False))
+
+    def test_crash_id_and_offer_of_advanced_crash_reporter(self):
+        self.store.mods = [m for m in self.store.mods if m["id"] != "bad"]
+        crash = {"crashed": True, "module": None, "fault": "Cyberpunk2077.exe+0x2A41E06", "saved": "C:\\x\\crash.zip"}
+        self.store.doctor["crashes"] = [{"time": 2e9, "fault": crash["fault"]}]
+        probs = {p["id"]: p for p in doctor.diagnose(self.store, 0, crash)}
+        self.assertEqual(probs["unknown"]["fixes"][-1]["action"], ["queue_nexus", doctor.ACR_NEXUS])  # not installed: offer it
+        self.assertIn("This crash is new", probs["unknown"]["detail"])
+        self.assertIn("Crash logs saved in C:\\x\\crash.zip", probs["unknown"]["detail"])
+        self.store.doctor["crashes"].insert(0, {"time": 1e9, "fault": crash["fault"]})
+        (self.game / doctor.ACR).mkdir(parents=True)
+        probs = {p["id"]: p for p in doctor.diagnose(self.store, 0, crash)}
+        self.assertIn("The same crash happened 2 times", probs["unknown"]["detail"])
+        self.assertNotIn("queue_nexus", [f["action"][0] for f in probs["unknown"]["fixes"]])  # installed already
+
+    def test_bisect_keeps_requirements_with_the_mods_that_need_them(self):
+        def nx(mid, nid, req=()):
+            return mod(mid, [], source={"type": "nexus", "mod_id": nid}, requires=[{"mod_id": r, "name": ""} for r in req])
+        self.store.mods = [nx("user", 4, [1]), nx("a", 2), nx("b", 3), nx("c", 5), nx("lib", 1)]
+        self.store.doctor["crashes"] = [{"time": 1, "fault": None, "secs": 90}]
+        state = doctor.bisect_start(self.store)
+        self.assertEqual(state["testing"], ["lib", "user", "a"])  # a requirement comes before the mod that needs it
+        self.assertEqual(state["crash_secs"], 90)
+        self.assertEqual(doctor.bisect_off({**state, "suspects": ["lib", "a"], "testing": ["a"]}), {"lib", "user"})
+        self.assertEqual(doctor.bisect_step(state, True, 300)["crash_secs"], 300)
+
+    def test_report_for_an_ai_with_recent_crashes(self):
+        self.store.doctor["crashes"] = [{"time": 1e9, "fault": "Bad.dll+0x10", "secs": 300}]
+        probs = [doctor.problem("x", "T", f"Saved in {self.store.root}\\crash_logs\\a.zip", [])]
+        text = doctor.report(self.store, probs, for_ai=True)
+        self.assertTrue(text.startswith(doctor.AI_ASK))
+        self.assertIn("<data folder>\\crash_logs", text)
+        self.assertIn("Bad.dll+0x10, after 5 min", text)
+        self.assertFalse(doctor.report(self.store, probs).startswith(doctor.AI_ASK))
+
+    def test_crash_logs_are_kept(self):
+        self.write("r6/logs/redscript_rCURRENT.log", "[ERROR] x\n")
+        rep = Path(tempfile.mkdtemp()) / "report1"
+        rep.mkdir()
+        (rep / "minidump.dmp").write_bytes(b"MDMP")
+        (self.store.root / "crash_logs").mkdir()
+        for old in ("crash-20000101-000000.zip", "crash-20010101-000000.zip"):
+            (self.store.root / "crash_logs" / old).write_bytes(b"")
+        z = doctor.keep_logs(self.store, time.time() - 60, str(rep), keep=2)
+        with zipfile.ZipFile(z) as zf:
+            names = zf.namelist()
+        self.assertIn("report/report1/minidump.dmp", names)
+        self.assertIn("r6/logs/redscript_rCURRENT.log", names)
+        self.assertEqual(sorted(p.name for p in z.parent.iterdir()), ["crash-20010101-000000.zip", z.name])
+
     def test_parse_events_only_game(self):
-        [(module, started)] = parse_events(EVENTS.format(game="C:\\G"))
+        [(module, started, offset)] = parse_events(EVENTS.format(game="C:\\G"))
+        self.assertEqual(offset, 0x1A2B)
         self.assertEqual(module, "C:\\G\\red4ext\\plugins\\Bad Plugin\\Bad.dll")
         self.assertEqual(time.strftime("%Y-%m-%d", time.gmtime(started)), "2026-11-05")  # FILETIME decoded
 

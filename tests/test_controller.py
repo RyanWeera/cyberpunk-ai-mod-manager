@@ -401,6 +401,16 @@ class Pipeline(unittest.TestCase):
         self.assertNotIn("bisect", self.store.doctor)
         self.assertEqual([m["enabled"] for m in self.store.mods], [True, True, False, True])  # c auto-disabled
 
+    def test_bisect_ignores_a_short_launch_without_a_crash(self):
+        c = self.controller()
+        self.store.mods = [{"id": i, "name": i, "enabled": True, "files": [], "source": {"type": "file"}} for i in "abcd"]
+        c.bisect_begin()
+        self.store.doctor["bisect"]["crash_secs"] = 120
+        c._bisect_result(crashed=False, secs=30)  # quit before the crash would have come: does not count
+        self.assertEqual([m["enabled"] for m in self.store.mods], [True, True, False, False])
+        c._bisect_result(crashed=False, secs=200)
+        self.assertEqual([m["enabled"] for m in self.store.mods], [True, True, True, False])
+
 
 if __name__ == "__main__":
     unittest.main()

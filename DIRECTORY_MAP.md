@@ -1,5 +1,5 @@
 # Directory Map: CyperPunk Ai Mod Manger
-Start here: `manager_ui/` (the root `app.py` only handles the single window and nxm:// links)
+Start here: `manager_ui/` (the root `app.py` only handles the single window and nxm:// links). AI editors: read `CODE_MAP.md` first (rules, flows, every function with its line number)
 
 ## Folders
 - `manager_ui/` - window (Tk) and the controller that runs the whole download, install and crash pipeline
@@ -13,6 +13,7 @@ Start here: `manager_ui/` (the root `app.py` only handles the single window and 
 - `shared/` - settings, mod list storage, game folder detection
 - `tests/` - unittest suite with fake game folders, plus a real-crash end-to-end check
 - `docs/` - README screenshot
+- `tools/` - developer scripts: `CODE_MAP.md` generator
 - `.github/` - CI workflow that runs the tests on Windows
 
 ## Where to change things
@@ -29,3 +30,4 @@ Start here: `manager_ui/` (the root `app.py` only handles the single window and 
 ## Ignore when searching
 - `graft/` - code graph cache
 - `__pycache__/` - Python bytecode
+- `.ruff_cache/` - linter cache
