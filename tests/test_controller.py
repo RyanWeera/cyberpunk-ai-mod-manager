@@ -36,6 +36,9 @@ class Pipeline(unittest.TestCase):
             patcher = mock.patch.object(ctl_mod.llm, name)
             self.addCleanup(patcher.stop)
             setattr(self, name, patcher.start())
+        github = mock.patch.object(ctl_mod.nexus, "github_copy", return_value=None)  # no network in tests
+        self.addCleanup(github.stop)
+        self.github = github.start()
         timer = mock.patch.object(ctl_mod.threading, "Timer")
         self.addCleanup(timer.stop)
         self.timer = timer.start()
@@ -111,6 +114,26 @@ class Pipeline(unittest.TestCase):
         self.assertTrue((self.game / "archive/pc/mod/a.archive").exists())
         self.assertNotIn("key", self.store.mods[0]["source"])  # download keys are not stored
 
+    def test_free_account_gets_the_same_version_from_github_without_a_click(self):
+        self.store.settings["api_key"] = "k"
+        z = make_zip(self.tmp / "gh.zip", {"a.archive": "x"})
+        self.github.return_value = {"repo": "a/equipment-ex", "url": "gh-url"}
+        info = {"name": "Equipment-EX", "version": "1.3", "requires": [],
+                "files": [{"fileId": 7, "name": "E", "version": "1.3", "category": "MAIN", "primary": 1, "date": 1}]}
+        got = []
+        with mock.patch.object(ctl_mod.nexus, "mod_info", lambda mid, key="": info), \
+                mock.patch.object(ctl_mod.nexus, "validate", lambda key: {"name": "u", "is_premium": False}), \
+                mock.patch.object(ctl_mod, "download", lambda url, folder, prog=None, headers=None: got.append(url) or z), \
+                mock.patch.object(ctl_mod.webbrowser, "open") as browser:
+            c = self.controller()
+            c.add_links("https://www.nexusmods.com/cyberpunk2077/mods/6945")
+            wait_idle(c)
+        self.github.assert_called_once_with(6945, "1.3")
+        self.assertEqual((c.jobs[0]["state"], got), ("done", ["gh-url"]))
+        browser.assert_not_called()
+        self.assertEqual(self.store.mods[0]["id"], "nexus-6945-7")  # still the Nexus mod: packs and updates find it
+        self.assertNotIn("github", self.store.mods[0]["source"])
+
     def test_jobs_wait_for_key_then_premium_needs_no_click(self):
         z = make_zip(self.tmp / "nx.zip", {"a.archive": "x"})
         info = {"name": "Nx", "version": "1", "requires": [],
@@ -129,6 +152,24 @@ class Pipeline(unittest.TestCase):
             wait_idle(c)
         self.assertEqual(c.jobs[0]["state"], "done")
         browser.assert_not_called()
+
+    def test_compatibility_patch_is_added_only_for_mods_the_user_has(self):
+        self.store.mods = [mod("w", [], name="WINGDEER HAIR COLLECTION", source={"type": "nexus", "mod_id": 20, "file_id": 1})]
+        files = [{"fileId": 1, "name": "x", "version": "1", "category": "MAIN", "primary": 1, "date": 1}]
+        mods = {10: ("EKT", []), 30: ("EKT - Preem hair - compatability patch", [10, 20]),  # needs both: added
+                31: ("Female Corpo ACT 1 Patch 1.5", [10]),  # a game-patch save, not a compatibility patch
+                32: ("EKT - Other Hair Patch", [10, 99]),  # needs a mod the user does not have
+                33: ("EKT - WINGDEER HAIR COLLECTION patch", [10]),  # names the user's mod: added
+                34: ("Random Compatibility Patch", [10])}  # names no mod of the user's
+        info = lambda mid, key="": {"name": mods[mid][0], "version": "1", "files": files,
+                                    "requires": [{"mod_id": r, "name": str(r)} for r in mods[mid][1] if r != 20]
+                                    + ([{"mod_id": 20, "name": "W"}] if 20 in mods[mid][1] else [])}
+        requiring = lambda mid: [{"mod_id": i, "name": mods[i][0]} for i in (30, 31, 32, 33, 34)] if mid == 10 else []
+        c = Controller(self.store, lambda k, p=None: self.events.put((k, p)), workers=0, watch_game=False)
+        with mock.patch.object(ctl_mod.nexus, "mod_info", info), mock.patch.object(ctl_mod.nexus, "mods_requiring", requiring):
+            c._add({"type": "nexus", "mod_id": 10})
+        self.assertEqual([j["name"] for j in c.jobs], ["EKT", "EKT - Preem hair - compatability patch",
+                                                       "EKT - WINGDEER HAIR COLLECTION patch"])
 
     def test_job_ids_stay_unique_and_skip_retry_respect_state(self):
         c = Controller(self.store, lambda k, p=None: None, workers=0, watch_game=False)  # no workers: jobs stay queued
@@ -214,6 +255,33 @@ class Pipeline(unittest.TestCase):
                 mock.patch.object(c, "_job"), mock.patch.object(c, "add_framework"):
             c._add({"type": "collection", "slug": "abc"})
         self.assertEqual(self.store.packs, {"My Pack": [["nexus-5-50", True]]})
+        self.assertEqual(self.store.pack_info["My Pack"]["names"]["nexus-5-50"], "Car")  # the My mod packs page shows it
+
+    def test_a_pack_with_optional_or_outdated_mods_asks_first(self):
+        files = [{"mod_id": 5, "file_id": 50, "optional": False, "name": "Car", "version": "1", "outdated": ""},
+                 {"mod_id": 6, "file_id": 60, "optional": True, "name": "Extra", "version": "1", "outdated": ""},
+                 {"mod_id": 7, "file_id": 70, "optional": False, "name": "Old", "version": "1", "outdated": "it is old"}]
+        c = self.controller()
+        with mock.patch.object(ctl_mod.nexus, "collection", lambda *a: {"name": "P", "revision": 1, "files": files}),                 mock.patch.object(c, "_job") as job:
+            c._add({"type": "collection", "slug": "abc"})
+            [(_, asked)] = [e for e in list(self.events.queue) if e[0] == "pack_choice"]
+            self.assertEqual([f["name"] for f in asked["files"]], ["Extra", "Old"])
+            self.assertEqual((self.store.packs, job.call_count), ({}, 0))  # nothing happens before the answer
+            c._add({**asked["link"], "chosen": [60]})  # Extra yes, Old skipped
+        self.assertEqual([a.args[0] for a in job.call_args_list], ["Car", "Extra"])
+        self.assertEqual(self.store.packs["P"], [["nexus-5-50", True], ["nexus-6-60", True]])
+
+    def test_an_outdated_mod_asks_download_or_skip(self):
+        files = [{"fileId": 1, "name": "x", "version": "1", "category": "MAIN", "primary": 1, "date": 1}]
+        info = lambda mid, key="": {"name": "Old", "version": "1", "files": files, "requires": [], "outdated": "it is old"}
+        c = self.controller()
+        with mock.patch.object(ctl_mod.nexus, "mod_info", info), mock.patch.object(c, "_job") as job,                 mock.patch.object(c, "_compat"):
+            c._add({"type": "nexus", "mod_id": 3})
+            job.assert_not_called()
+            [asked] = [p for k, p in list(self.events.queue) if k == "outdated"]
+            self.assertEqual(asked["why"], "it is old")
+            c._add({**asked["link"], "anyway": True})  # the user clicked Download
+        self.assertEqual(job.call_args.args[0], "Old")
 
     def test_launch_asks_windows_when_the_game_runs_as_admin(self):
         c = self.controller()

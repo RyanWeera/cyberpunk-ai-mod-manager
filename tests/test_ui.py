@@ -4,6 +4,7 @@ import tempfile
 import threading
 import time
 import tkinter as tk
+from tkinter import ttk
 import unittest
 import uuid
 from multiprocessing import AuthenticationError
@@ -74,6 +75,12 @@ class Window(unittest.TestCase):
         app.search.set("zzz")
         self.assertIn("No mod matches", app.mods_empty_text.cget("text"))
         app.search.set("")
+        app.mods_show.set("Off")
+        app.refresh_mods()
+        self.assertEqual(app.mods.get_children(), ("b",))
+        app.mods_show.set("All")
+        app.refresh_mods()
+        self.assertIn("2 mods  ·  1 on", app.pack_sub.cget("text"))
         app.mods.selection_set(("a", "b"))
         app.toggle()  # one is off -> both on
         self.assertTrue(s.mod("a")["enabled"] and s.mod("b")["enabled"])
@@ -84,6 +91,20 @@ class Window(unittest.TestCase):
             app.remove()
         self.assertIsNone(s.mod("a"))
         self.assertFalse((s.staging / "a").exists())
+
+    def test_rail_and_add_dialog(self):
+        app = self.app
+        app.rail_items["Downloads"].event_generate("<Button-1>")
+        self.root.update()
+        self.assertEqual(str(app.tabs.select()), str(app.tab["Downloads"]))
+        self.assertEqual(app.page_title.cget("text"), "Downloads")
+        self.assertEqual(str(app.rail_items["Downloads"].cget("style")), "RailOn.TLabel")
+        win = app.add_dialog()
+        rows = [w for w in win.winfo_children() if str(w.cget("style")) == "Opt.TFrame"]
+        self.assertEqual(len(rows), 5)
+        rows[1].event_generate("<Button-1>")  # Paste links
+        self.assertEqual(str(app.tabs.select()), str(app.tab["Add mods"]))
+        self.assertFalse(win.winfo_exists())
 
     def test_add_links_placeholder_and_count(self):
         app = self.app
@@ -97,6 +118,35 @@ class Window(unittest.TestCase):
         add.assert_called_once()
         self.assertEqual(str(app.tabs.select()), str(app.tab["Downloads"]))
         self.assertIn("Added 2 link(s)", app.status.cget("text"))
+
+    def test_browse_tab_cards_pages_and_install(self):
+        app = self.app
+        self.assertEqual(app.browse_req, 0)  # no game folder yet: Settings shows, and nothing loads from the web
+        stage(self.store, mod("cet", [], source={"type": "github", "repo": "maximegmd/CyberEngineTweaks"}))
+        mods = [{"id": 107, "name": "Cyber Engine Tweaks", "summary": "Scripting", "author": "yamashi", "downloads": 20381596,
+                 "endorsements": 248536, "updated": "2026-10-26T01:28:58Z", "thumb": "https://staticdelivery.nexusmods.com/a.png",
+                 "category": "Modders Resources"},
+                {"id": 5, "name": "Nova LUT", "summary": "", "author": "", "downloads": 9, "endorsements": 0, "updated": "",
+                 "thumb": "", "category": ""}]
+        app.browse_req = 3
+        with mock.patch.object(app.ctl, "bg") as bg:
+            app.show_browse({"req": 2, "page": 0, "total": 1, "categories": {}, "mods": []})  # an older search: ignored
+            self.assertEqual(app.results.winfo_children(), [])
+            app.show_browse({"req": 3, "page": 0, "total": 41, "categories": {"Weapons": 1464, "Audio": 1438}, "mods": mods})
+        bg.assert_called_once()  # thumbnails load in the background
+        self.assertEqual(list(app.cat_vars), ["Audio", "Weapons"])
+        self.assertEqual(len(app.results.winfo_children()), 2)
+        self.assertEqual(app.browse_info.cget("text"), "41 mods")
+        self.assertEqual([w.cget("text") for w in app.pager.winfo_children()], ["1", "2", "3"])
+        self.assertTrue(app.prev_btn.instate(["disabled"]))
+        self.assertFalse(app.next_btn.instate(["disabled"]))
+        self.assertEqual(app.browse_buttons[107].cget("text"), "✔  Installed")  # the framework came from GitHub
+        with mock.patch.object(app.ctl, "add_links") as add:
+            app.browse_install(mods[1])
+        add.assert_called_once_with("https://www.nexusmods.com/cyberpunk2077/mods/5")
+        self.assertTrue(app.browse_buttons[5].instate(["disabled"]))
+        app.show_browse({"req": 3, "error": "timed out"})
+        self.assertIn("timed out", app.browse_info.cget("text"))
 
     def test_find_mod_from_video(self):
         app = self.app
@@ -259,6 +309,22 @@ class Window(unittest.TestCase):
             self.assertEqual(ask.call_args.kwargs["default"], "no")
             self.assertEqual(add.call_args_list, [mock.call(link)] * answer)
 
+    def test_pack_choice_and_outdated_questions(self):
+        app = self.app
+        link = {"type": "collection", "slug": "abc", "revision": None}
+        files = [{"mod_id": 6, "file_id": 60, "optional": True, "name": "Extra", "outdated": ""},
+                 {"mod_id": 7, "file_id": 70, "optional": False, "name": "Old", "outdated": "it is old"}]
+        with mock.patch.object(app.ctl, "add_link") as add:
+            picks = app.pack_choice({"link": link, "name": "P", "files": files})
+            picks[70].set(False)  # skip the old mod
+            app.choice_ok()
+            add.assert_called_once_with({**link, "chosen": [60]})
+            add.reset_mock()
+            one = {"type": "nexus", "mod_id": 3}
+            app.ask_outdated({"link": one, "name": "Old", "why": "it is old"})(True)
+            app.ask_outdated({"link": one, "name": "Old", "why": "it is old"})(False)
+            add.assert_called_once_with({**one, "anyway": True})
+
     def test_pipe_squatter_gets_nothing(self):
         """A program that holds the pipe name but does not know the token learns no link."""
         pipe = rf"\\.\pipe\cp2077mm-test-{uuid.uuid4().hex}"
@@ -342,6 +408,49 @@ class Window(unittest.TestCase):
             app.delete_pack()
         self.assertNotIn("Merged pack", self.store.packs)
         self.assertEqual(app.pack_pick.get(), ui.CURRENT)
+
+    def test_settings_names_the_other_app_and_fixes_it_in_one_click(self):
+        app, on = self.app, []
+        app.register, app.registered, app.nxm_owner = lambda: on.append(True), lambda: bool(on), lambda: "Vortex"
+        app.refresh_settings()
+        self.assertIn("sends files to Vortex", app.nxm_info.cget("text"))
+        self.assertEqual(str(app.nxm_btn.cget("style")), "Big.TButton")
+        job = {"state": "waiting", "name": "Nx", "src": {"mod_id": 5, "file_id": 6}}
+        app.ctl.jobs.append(job)
+        with mock.patch.object(app.ctl, "reopen") as reopen:
+            app.nxm_btn.invoke()
+        reopen.assert_called_once_with(job)  # its last click went to Vortex
+        self.assertIn("sends files to this app", app.nxm_info.cget("text"))
+        self.assertEqual(app.nxm_btn.cget("text"), "Set it up again")
+
+    def test_my_mod_packs_page(self):
+        app = self.app
+        self.store.mods = [mod("a", [], name="Alpha")]
+        self.store.packs = {"Mine": [["a", True]], "Neon City": [["a", False], ["nexus-9-90", True]]}
+        self.store.pack_info = {"Neon City": {"url": "https://www.nexusmods.com/games/cyberpunk2077/collections/x",
+                                              "names": {"nexus-9-90": "Neon Signs"}}}
+        app.refresh_packs()
+        cards = lambda: [w for w in app.packs_box.winfo_children() if isinstance(w, ttk.Frame)]
+        text = lambda w: " ".join(str(c.cget("text")) for c in w.winfo_children() if isinstance(c, ttk.Label))
+        self.assertEqual(len(cards()), 2)
+        app.packs_show.set("nexus")
+        app.refresh_pack_page()
+        [card] = cards()
+        self.assertIn("1 not installed yet", text(card))
+        app.pack_open.add("Neon City")
+        app.refresh_pack_page()
+        self.assertIn("Neon Signs   (not installed yet)", text(cards()[0]))
+        app.packs_show.set("all")
+        app.packs_q.set("mine")
+        with mock.patch.object(app, "redeploy") as redeploy:
+            app.use_pack("Mine")
+        redeploy.assert_called_once()
+        app.refresh_pack_page()  # the window does this when the "mods" event arrives
+        self.assertIn("IN USE", " ".join(text(f) for f in cards()[0].winfo_children() if isinstance(f, ttk.Frame)))
+        self.store.settings["game_dir"] = str(fake_game(self.tmp))
+        with mock.patch.object(app.ctl, "bg") as bg:
+            app.launch_pack("Mine")
+        bg.assert_called_once_with(app.ctl.launch, "Mine")
 
     def test_problem_picker_applies_chosen_fix(self):
         app = self.app
