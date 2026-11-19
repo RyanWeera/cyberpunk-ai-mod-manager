@@ -47,6 +47,18 @@ def register_nxm():
         winreg.SetValueEx(k, "", 0, winreg.REG_SZ, nxm_command())
 
 
+def nxm_owner():
+    """The name of the program Windows now gives nxm:// links to (such as "Vortex"), or "" when none is set."""
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, NXM_KEY) as k:
+            cmd = winreg.QueryValueEx(k, "")[0]
+    except OSError:
+        return ""
+    exe = cmd.split('"')[1] if cmd.startswith('"') else cmd.split(" ")[0]
+    return Path(exe).stem
+
+
 def nxm_registered():
     import winreg
     try:
@@ -174,7 +186,7 @@ def main(wait=15):
     TOKEN.parent.mkdir(parents=True, exist_ok=True)
     TOKEN.write_bytes(token)
     from manager_ui.ui import run
-    run(server, url, register_nxm, nxm_registered, token)
+    run(server, url, register_nxm, nxm_registered, token, nxm_owner)
 
 
 if __name__ == "__main__":

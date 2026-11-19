@@ -46,12 +46,14 @@ class Store:
         self.doctor = d.get("doctor", {})      # last_launch, last_good, bisect, history, ignored
         self.packs = d.get("packs", {})        # mod pack name -> [[mod id, on], ...], lowest priority first
         self.pack = d.get("pack", "")          # the pack the mod list was last set to ("" = none)
+        self.pack_info = d.get("pack_info", {})  # Nexus packs only: name -> {"url", "names": {mod id: mod name}}
 
     def save(self):
         with self.lock:
             tmp = self.file.with_suffix(".tmp")
             body = {"settings": self.settings, "mods": self.mods, "deployed": self.deployed, "deploy_game": self.deploy_game,
-                    "modlist_tracked": self.modlist_tracked, "doctor": self.doctor, "packs": self.packs, "pack": self.pack}
+                    "modlist_tracked": self.modlist_tracked, "doctor": self.doctor, "packs": self.packs, "pack": self.pack,
+                    "pack_info": self.pack_info}
             tmp.write_text(json.dumps(body, indent=1), "utf-8")
             os.replace(tmp, self.file)
 

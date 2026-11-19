@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from crash_doctor import doctor, watch
@@ -22,6 +23,9 @@ from shared.store import GAME_EXE
 from video_finder import finder
 from virus_scan import scan
 
+# a compatibility patch's name; NOT_COMPAT: names that only speak of a game patch or say "compatible with" an item
+COMPAT = re.compile(r"patch|compat|integration|bridge", re.IGNORECASE)
+NOT_COMPAT = re.compile(r"deleted|obsolete|deprecated|incompatible|not compatible|patch \d|\d compatible", re.IGNORECASE)
 CORE = ["RED4ext", "Cyber Engine Tweaks", "redscript", "ArchiveXL", "TweakXL", "Codeware"]
 GAME_ON = llm.BLOCKED
 
@@ -108,11 +112,17 @@ class Controller:
         t = link["type"]
         if t == "collection":
             c = nexus.collection(link["slug"], link.get("revision"), self.key)
-            files = [f for f in c["files"] if self.store.settings["include_optional"] or not f["optional"]]
+            ask = lambda f: (f["optional"] or f.get("outdated")) and f["mod_id"] not in FW_BY_NEXUS
+            if "chosen" not in link and any(map(ask, c["files"])):  # the window asks which ones to download, then adds it again
+                return self.notify("pack_choice", {"link": link, "name": c["name"].strip(), "files": [f for f in c["files"] if ask(f)]})
+            files = [f for f in c["files"] if not ask(f) or f["file_id"] in link.get("chosen", ())]
             self.notify("log", f"Collection '{c['name']}' revision {c['revision']}: {len(files)} files")
             with self.store.lock:  # the collection is also a mod pack (a mod's id is known before its download)
                 self.store.packs[c["name"].strip()] = [[f"nexus-{f['mod_id']}-{f['file_id']}", True] for f in files
                                                        if f["mod_id"] not in FW_BY_NEXUS]
+                self.store.pack_info[c["name"].strip()] = {
+                    "url": f"https://www.nexusmods.com/games/{nexus.GAME}/collections/{link['slug']}",
+                    "names": {f"nexus-{f['mod_id']}-{f['file_id']}": f["name"] for f in files}}
                 self.store.save()
             self.notify("mods", None)
             for f in files:
@@ -127,6 +137,8 @@ class Controller:
             if file_id and link.get("name"):  # collection entry: already known, no lookup needed
                 return self._job(link["name"], src, version=link.get("version", ""))
             info = nexus.mod_info(mod_id, self.key)
+            if info.get("outdated") and not link.get("anyway"):  # the window asks: Download (adds it again with "anyway") or Skip
+                return self.notify("outdated", {"link": link, "name": info["name"], "why": info.get("outdated")})
             f = nexus.pick_file(info["files"], file_id)
             if not f:
                 raise RuntimeError(f"Nexus mod {mod_id} has no file to download")
@@ -137,6 +149,10 @@ class Controller:
                     self._add({"type": "nexus", "mod_id": r["mod_id"]})
                 except Exception as e:  # noqa: BLE001 - a broken requirement must not cancel the mod
                     self.notify("log", f"Requirement {r['name']}: {e}")
+            try:
+                self._compat(mod_id, info["name"])
+            except Exception as e:  # noqa: BLE001 - network boundary: the mod itself is added already
+                self.notify("log", f"Compatibility check for {info['name']}: {e}")
         elif t == "github":
             fw = FW_BY_REPO.get(link["repo"].lower())
             if fw:
@@ -145,6 +161,35 @@ class Controller:
                 self._job(link["repo"].split("/")[1], {"type": "github", "repo": link["repo"]})
         else:
             self._job(Path(link.get("path") or link["url"].split("?")[0]).stem, link)
+
+    def _compat(self, mod_id, name):
+        """Add the compatibility patches for mod_id and the user's other mods. A patch is a Nexus mod that requires
+        mod_id, has a patch-like name, needs or names another of the user's mods (not a framework), and needs no mod
+        the user does not have. Collections bring their own patches, so their files skip this."""
+        with self.lock:
+            have = {s["mod_id"]: n for s, n in [(m["source"], m["name"]) for m in self.store.mods] +
+                    [(j["src"], j["name"]) for j in self.jobs if j["state"] != "failed"] if s.get("type") == "nexus"}
+        others = {i: n for i, n in have.items() if i != mod_id and i not in FW_BY_NEXUS}
+        if not others:
+            return
+        found = [d for d in nexus.mods_requiring(mod_id) if d["mod_id"] not in have and COMPAT.search(d["name"])
+                 and not NOT_COMPAT.search(d["name"])]
+        key = lambda n: re.sub(r"[^a-z0-9]", "", n.lower())
+
+        def partner(d):
+            try:
+                reqs = {r["mod_id"] for r in nexus.mod_info(d["mod_id"], self.key)["requires"]} - set(FW_BY_NEXUS)
+            except Exception:  # noqa: BLE001 - a patch page that fails to load is skipped
+                return None
+            if not reqs <= set(have):
+                return None  # it needs a mod that is not in this list: it is not for this list
+            return next((n for i, n in others.items() if i in reqs or len(key(n)) >= 6 and key(n) in key(d["name"])), None)
+
+        with ThreadPoolExecutor(6) as pool:  # ponytail: 24 candidates cap, enough for all but the biggest hub mods
+            for d, other in zip(found[:24], pool.map(partner, found[:24])):
+                if other:
+                    self.notify("log", f"Adding the compatibility patch '{d['name']}' for {name} and {other}.")
+                    self._add({"type": "nexus", "mod_id": d["mod_id"]})
 
     def add_framework(self, fw):
         with self.lock:
@@ -252,12 +297,23 @@ class Controller:
                 j["state"] = "needkey"
                 return self._set(j, "Needs your Nexus API key (Settings). I continue when you add it.")
             if not (self.premium or s.get("key")):
-                j["state"] = "waiting"
-                return self._set(j, "Waiting for your click on Nexus")
+                if "github" not in s:  # looked up once: a retry or a later click does not ask GitHub again
+                    self._set(j, "Looking for the author's GitHub release")
+                    try:
+                        s["github"] = nexus.github_copy(s["mod_id"], j.get("version", ""))
+                    except Exception as e:  # noqa: BLE001 - network boundary: the Nexus click still works
+                        s["github"] = None
+                        self.notify("log", f"{j['name']}: GitHub check failed ({e})")
+                if not s["github"]:
+                    j["state"] = "waiting"
+                    return self._set(j, "Waiting for your click on Nexus")
         # One new folder per job: no two jobs share a file, and nothing here is ever the user's own file.
         work = Path(tempfile.mkdtemp(prefix="job-", dir=self.store.downloads))
         try:
-            if s["type"] == "nexus":
+            if s["type"] == "nexus" and s.get("github") and not (self.premium or s.get("key")):
+                self.notify("log", f"{j['name']}: same version on the author's GitHub ({s['github']['repo']}), so no click is needed.")
+                path = download(s["github"]["url"], work, prog)
+            elif s["type"] == "nexus":
                 self._set(j, "Getting download link")
                 path = download(nexus.download_url(self.key, s["mod_id"], s["file_id"], s.get("key"), s.get("expires")),
                                 work, prog)
@@ -298,7 +354,7 @@ class Controller:
         rels = install.install(path, new, j["name"])
         fw = j.get("framework") or FW_BY_REPO.get(s.get("repo", "").lower()) or FW_BY_NEXUS.get(s.get("mod_id"))
         rec = {"id": mid, "name": j["name"], "version": j.get("version", ""), "enabled": True,
-               "source": {k: v for k, v in s.items() if k not in ("key", "expires")}, "files": rels,
+               "source": {k: v for k, v in s.items() if k not in ("key", "expires", "github")}, "files": rels,
                "needs": sorted(install.needs_for(rels) - {fw}), "requires": j.get("requires", []), "framework": fw,
                "installed": time.time()}
         with self.store.lock:
@@ -413,6 +469,7 @@ class Controller:
     def delete_pack(self, name):
         with self.store.lock:
             self.store.packs.pop(name, None)
+            self.store.pack_info.pop(name, None)
             if self.store.pack == name:
                 self.store.pack = ""
             self.store.save()

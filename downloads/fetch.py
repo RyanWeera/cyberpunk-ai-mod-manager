@@ -1,13 +1,18 @@
 """HTTP helpers, file downloads with progress, and GitHub releases for the core frameworks."""
+import hashlib
 import json
 import os
 import re
+import subprocess
 import time
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from shared.store import VERSION
+
+SYS32 = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"
 
 UA = {"User-Agent": f"CP2077-AI-Mod-Manager/{VERSION}", "Application-Name": "CP2077 AI Mod Manager", "Application-Version": VERSION}
 
@@ -46,6 +51,55 @@ def ascii_name(name):
     """A plain ASCII file name. Windows tools that read their command line in the ANSI code page turn some
     Unicode letters into quotes ("best-fit"), so a server-chosen name must never reach them as it is."""
     return re.sub(r"[^A-Za-z0-9._ ()+-]", "_", name).strip(". ") or "download.zip"
+
+
+# Tk shows only PNG and GIF, and Nexus serves its images as WebP, so the Windows image codecs (WIC, through WPF)
+# scale and crop them to PNG. Windows 11 has the WebP codec built in.
+SHRINK = r"""Add-Type -AssemblyName PresentationCore
+foreach ($l in Get-Content -LiteralPath $env:CP_THUMBS -Encoding UTF8) {
+  $src, $dst, $w, $h = $l -split '\|'; $w = [int]$w; $h = [int]$h
+  try {
+    $fs = [IO.File]::OpenRead($src)
+    try { $f = [Windows.Media.Imaging.BitmapDecoder]::Create($fs, 'IgnoreColorProfile', 'OnLoad').Frames[0] } finally { $fs.Close() }
+    $s = [Math]::Max($w / $f.PixelWidth, $h / $f.PixelHeight) + 0.001
+    $t = New-Object Windows.Media.Imaging.TransformedBitmap $f, (New-Object Windows.Media.ScaleTransform $s, $s)
+    $cw = [Math]::Min($w, $t.PixelWidth); $ch = [Math]::Min($h, $t.PixelHeight)
+    $r = New-Object Windows.Int32Rect ([int](($t.PixelWidth - $cw) / 2)), ([int](($t.PixelHeight - $ch) / 2)), $cw, $ch
+    $e = New-Object Windows.Media.Imaging.PngBitmapEncoder
+    $e.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create((New-Object Windows.Media.Imaging.CroppedBitmap $t, $r)))
+    $o = [IO.File]::Create($dst); try { $e.Save($o) } finally { $o.Close() }
+  } catch {}
+  Remove-Item -LiteralPath $src -ErrorAction SilentlyContinue
+}"""
+
+
+def thumbnails(urls, folder, w, h):
+    """{url: png path} of w x h crops of Nexus images, cached in folder. Images that fail are left out."""
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    out = {u: folder / f"{hashlib.sha1(u.encode()).hexdigest()[:16]}_{w}x{h}.png" for u in set(urls)
+           if urllib.parse.urlparse(u).scheme == "https" and urllib.parse.urlparse(u).hostname in ("staticdelivery.nexusmods.com", "media.nexusmods.com")}
+
+    def get(u):
+        src = out[u].with_suffix(".src")
+        with urllib.request.urlopen(urllib.request.Request(u, headers=UA), timeout=20) as r:
+            src.write_bytes(r.read(5 << 20))  # thumbnails are small; a 5 MB cap keeps a bad file from filling memory
+        return f"{src}|{out[u]}|{w}|{h}"
+
+    with ThreadPoolExecutor(8) as pool:
+        jobs = [pool.submit(get, u) for u, p in out.items() if not p.exists()]
+        lines = [j.result() for j in jobs if not j.exception()]
+    if lines:
+        todo = folder / "todo.txt"
+        todo.write_text("\n".join(lines), encoding="utf-8-sig")
+        try:
+            subprocess.run([str(SYS32 / "WindowsPowerShell/v1.0/powershell.exe"), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                            "-Command", SHRINK], check=False, env={**os.environ, "CP_THUMBS": str(todo)}, timeout=120, capture_output=True,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        finally:  # a timeout leaves the downloaded originals behind
+            for line in lines:
+                Path(line.split("|")[0]).unlink(missing_ok=True)
+    return {u: str(p) for u, p in out.items() if p.exists()}
 
 
 def download(url, folder, progress=None, headers=None):
