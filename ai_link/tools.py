@@ -59,8 +59,13 @@ def add_mods(ctl, links):
         if not ctl.key:
             out.append("No Nexus API key is set: ask the user to add it in the Settings tab ('Get my key').")
         elif not ctl.premium:
-            out.append("Free Nexus account: the manager opens each file's Nexus page in the browser, and the user must "
-                       "click 'Slow download' on each one. Tell the user.")
+            if ctl.store.settings.get("auto_click", True):
+                out.append("Free Nexus account: the manager clicks 'Slow download' by itself in a hidden browser "
+                           "(the user logs in to Nexus once). Tell the user no clicks are needed, and that a failed "
+                           "click makes the manager open the page for a manual click instead.")
+            else:
+                out.append("Free Nexus account: the manager opens each file's Nexus page in the browser, and the user must "
+                           "click 'Slow download' on each one. Tell the user.")
     return "\n".join(out)
 
 
@@ -83,7 +88,10 @@ def status(ctl):
         out.append("Downloads:")
         out += [f"- {j['name']}: {j['status']} ({j['state']})" for j in jobs]
         if any(j["state"] == "waiting" for j in jobs):
-            out.append("Waiting files need the user to click 'Slow download' on the Nexus page the manager opened.")
+            out.append("Waiting files need the user to click 'Slow download' on the Nexus page the manager opened."
+                       if not st.settings.get("auto_click", True) else
+                       "Waiting files are clicked by the manager's hidden browser; if a click fails, the manager "
+                       "opens the Nexus page for a manual click.")
     mods = st.mods
     out.append(f"Installed mods, in load order ({len(mods)}; the last one wins):")
     out += [f"{n}. {m['name']}" + ("" if m["enabled"] else " (off)") for n, m in enumerate(mods, 1)]

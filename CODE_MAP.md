@@ -157,19 +157,19 @@ Used by: app.py
 - L10 def `reply`: The answer to one JSON-RPC message, or None for a notification.
 - L34 def `serve`: call(tool name, arguments) -> text.
 
-### `ai_link/tools.py` (123 lines)
+### `ai_link/tools.py` (131 lines)
 The tools that AI apps (Claude Desktop, Claude Code, Cursor and other MCP apps) can call.
 Uses: downloads/fetch.py, downloads/nexus.py, video_finder/finder.py
 Used by: ai_link/mcp.py, manager_ui/ui.py
 
 - L11 `TOOLS` (constant)
 - L35 def `add_mods`
-- L67 def `find_mods_in_video`
-- L76 def `status`
-- L93 def `sort_load_order`
-- L97 def `check_problems`
-- L105 def `run`: One call from the MCP server process, JSON {"tool", "args"} -> {"text"} or {"error"}.
-- L117 def `private`: The home folder holds the Windows user name: the AI app (often an online service) sees it as ~.
+- L72 def `find_mods_in_video`
+- L81 def `status`
+- L101 def `sort_load_order`
+- L105 def `check_problems`
+- L113 def `run`: One call from the MCP server process, JSON {"tool", "args"} -> {"text"} or {"error"}.
+- L125 def `private`: The home folder holds the Windows user name: the AI app (often an online service) sees it as ~.
 
 ### `app.py` (194 lines)
 Cyberpunk 2077 AI Mod Manager.
@@ -288,7 +288,7 @@ Used by: ai_link/tools.py, crash_doctor/doctor.py, downloads/nexus.py, local_ai/
 ### `downloads/nexus.py` (259 lines)
 Nexus Mods: link parsing, mod and collection lookups (GraphQL, no key needed) and download links (v1 REST).
 Uses: downloads/fetch.py
-Used by: ai_link/tools.py, manager_ui/controller.py, manager_ui/ui.py, video_finder/finder.py
+Used by: ai_link/tools.py, downloads/nexus_browser.py, manager_ui/controller.py, manager_ui/ui.py, video_finder/finder.py
 
 - L15 `GQL` (constant)
 - L16 `API` (constant)
@@ -313,6 +313,54 @@ Used by: ai_link/tools.py, manager_ui/controller.py, manager_ui/ui.py, video_fin
 - L211 def `download_url`
 - L217 def `files_page`: The page where a free user clicks "Slow download"; Nexus then hands the nxm:// link to this app.
 - L222 def `parse_link`: One pasted line -> a job description dict, None for blank/comment lines, ValueError when unknown.
+
+### `downloads/nexus_browser.py` (395 lines)
+Hidden browser that clicks "Slow download" on Nexus for free accounts (owner decision 2026-11-20, Settings > "Click 'Slow download' for me").
+Uses: downloads/nexus.py
+Used by: manager_ui/controller.py
+
+- L25 `BROWSERS` (constant)
+- L28 `FLAGS` (constant)
+- L30 `GUID` (constant)
+- L31 `LOGIN_JS` (constant)
+- L32 `HOOK_JS` (constant)
+- L37 `CLICK_JS` (constant)
+- L40 `POLL_JS` (constant)
+- L41 `READY_JS` (constant)
+- L44 class `NeedLogin`: The Nexus page shows a login link, so the hidden click cannot work until the user logs in once.
+- L48 def `find_browser`: Path of Edge, or Chrome as a fallback, or "" when neither is installed.
+- L57 def `scan_nxm`: The first string in a JSON value that starts with nxm:// (DevTools events nest it anywhere), or "".
+- L68 def `ws_frame`: One masked client WebSocket frame (RFC 6455: clients must mask).
+- L80 def `ws_message`: ((opcode, fin, payload), rest) of one complete frame in buf, (None, buf) while it is incomplete.
+- L108 class `WS`: A small WebSocket client for the DevTools protocol: text both ways, pings answered.
+  - L111 `.__init__`
+  - L132 `.send`
+  - L135 `.recv`: One text message, or None when nothing arrived in `timeout` seconds.
+  - L162 `.close`
+- L170 class `Tab`: One page in the browser: DevTools calls and the events they produce.
+  - L173 `.__init__`
+  - L178 `.call`: Send one DevTools command and return its result; a protocol error raises RuntimeError.
+  - L195 `.pump`
+  - L200 `.run`: Evaluate js and return its value (returned by value, so JSON-safe results only).
+  - L207 `.wait_ready`
+  - L218 `.wait_nxm`: The nxm:// link the site answers the click with, from any DevTools event or the page hook, or None.
+- L237 class `Browser`: One browser process on its own profile folder.
+  - L240 `.__init__`
+  - L244 `.alive`
+  - L247 `.start`
+  - L266 `._http`
+  - L270 `.open`: A new Tab loading `url` (PUT /json/new; older builds only take GET).
+  - L282 `.pages`
+  - L285 `.wait_login`: True when an open page no longer shows a login link.
+  - L303 `.close`
+  - L310 `.quit`
+- L321 class `Clicker`: The Nexus click queue's hidden browser.
+  - L326 `.__init__`
+  - L332 `._hidden`
+  - L340 `.click`: Run on a worker thread: click for one waiting job.
+  - L356 `._try`: Open the file's page hidden, click, and return the nxm:// link.
+  - L373 `._login`: One visible window on the same profile so the user can log in once; the login is kept.
+  - L391 `.close`
 
 ### `installer/deploy.py` (114 lines)
 Copy enabled mods from staging into the game folder.
@@ -371,9 +419,9 @@ Used by: manager_ui/controller.py, manager_ui/ui.py
 - L161 def `chat`
 - L173 def `advise`: {"summary", "fixes": [(problem, fix, why)], "after": [(lo id, hi id)]}: hi must load after (win over) lo.
 
-### `manager_ui/controller.py` (803 lines)
+### `manager_ui/controller.py` (821 lines)
 Everything the window does, without Tk: links -> jobs -> download -> virus scan -> install -> deploy, plus game launch, crash handling, fixes and u...
-Uses: crash_doctor/doctor.py, crash_doctor/watch.py, downloads/fetch.py, downloads/nexus.py, installer/deploy.py, installer/install.py, local_ai/llm.py, shared/store.py, video_finder/finder.py, virus_scan/scan.py
+Uses: crash_doctor/doctor.py, crash_doctor/watch.py, downloads/fetch.py, downloads/nexus.py, downloads/nexus_browser.py, installer/deploy.py, installer/install.py, local_ai/llm.py, shared/store.py, video_finder/finder.py, virus_scan/scan.py
 Used by: manager_ui/ui.py
 
 - L27 `COMPAT` (constant)
@@ -382,58 +430,59 @@ Used by: manager_ui/ui.py
 - L30 `GAME_ON` (constant)
 - L33 class `Controller`
   - L34 `.__init__`
-  - L50 `.key`
-  - L53 `.bg`
-  - L61 `.check_key`
-  - L79 `.add_links`
-  - L82 `.add_link`: One link that is parsed already, such as the nxm link the user said yes to.
-  - L86 `._expand`
-  - L95 `._have`
-  - L99 `._job`
-  - L107 `._set`
-  - L111 `._add`
-  - L165 `._compat`: Add the compatibility patches for mod_id and the user's other mods.
-  - L194 `.add_framework`
-  - L205 `.handle_nxm`: An nxm:// link from the browser.
-  - L235 `._next_click`: Free accounts: open the Nexus page of the next waiting file, one at a time.
-  - L245 `.reopen`
-  - L248 `.skip`: Only a download that has not started can be skipped.
-  - L258 `.retry`
-  - L267 `._worker`
-  - L289 `._run`
-  - L348 `.install_job`
-  - L379 `._after_job`
-  - L387 `.redeploy`
-  - L398 `._try`
-  - L404 `.set_enabled`
-  - L412 `.move`
-  - L422 `.save_pack`: Keep the mod list as it is now (which mods are on, and their order) as the mod pack `name`.
-  - L433 `.use_pack`: Turn on the pack's mods in the pack's order and turn off the rest.
-  - L450 `.merge_packs`: One pack with every mod of `names`.
-  - L469 `.delete_pack`
-  - L478 `.remove`
-  - L485 `.update_mod`
-  - L500 `.has_update`
-  - L512 `.launch`: Start the game with the mods that are on, or first set the mod list to the mod pack `pack`.
-  - L544 `._game_started`
-  - L555 `._game_exited`
-  - L591 `.crash_report`: Text of a report about the last game exit and the current mods, to share with a mod author or an AI chat.
-  - L596 `.check_now`
-  - L602 `.handle_problems`
-  - L612 `.apply`
-  - L647 `.undo`
-  - L667 `._order`: Sort the mod list by `ids`; a mod not in `ids` (added since) goes last, in its old order.
-  - L672 `.auto_sort`: Put the mods in the best load order (the Crash doctor can undo it), then check them for problems.
-  - L685 `.setup_ai`: Download the engine and the model when they are missing (a run from source), then start the engine once.
-  - L699 `.ask_ai`: Check the mods, let the local AI pick fixes and load-order rules, and send the advice to the window.
-  - L731 `.apply_ai`: The order first, so that a fix that moves one mod (prefer) keeps the last word.
-  - L740 `.find_in_video`
-  - L748 `.bisect_begin`
-  - L758 `._bisect_apply`
-  - L769 `.bisect_cancel`
-  - L776 `._bisect_result`
+  - L55 `.key`
+  - L58 `.bg`
+  - L66 `.check_key`
+  - L84 `.add_links`
+  - L87 `.add_link`: One link that is parsed already, such as the nxm link the user said yes to.
+  - L91 `._expand`
+  - L100 `._have`
+  - L104 `._job`
+  - L112 `._set`
+  - L116 `._add`
+  - L170 `._compat`: Add the compatibility patches for mod_id and the user's other mods.
+  - L199 `.add_framework`
+  - L210 `.handle_nxm`: An nxm:// link from the browser.
+  - L240 `._next_click`: Free accounts: the next waiting file, one at a time.
+  - L255 `._manual_click`: The hidden browser could not click (no login, Nexus changed its page, ...): back to the manual way.
+  - L263 `.reopen`
+  - L266 `.skip`: Only a download that has not started can be skipped.
+  - L276 `.retry`
+  - L285 `._worker`
+  - L307 `._run`
+  - L366 `.install_job`
+  - L397 `._after_job`
+  - L405 `.redeploy`
+  - L416 `._try`
+  - L422 `.set_enabled`
+  - L430 `.move`
+  - L440 `.save_pack`: Keep the mod list as it is now (which mods are on, and their order) as the mod pack `name`.
+  - L451 `.use_pack`: Turn on the pack's mods in the pack's order and turn off the rest.
+  - L468 `.merge_packs`: One pack with every mod of `names`.
+  - L487 `.delete_pack`
+  - L496 `.remove`
+  - L503 `.update_mod`
+  - L518 `.has_update`
+  - L530 `.launch`: Start the game with the mods that are on, or first set the mod list to the mod pack `pack`.
+  - L562 `._game_started`
+  - L573 `._game_exited`
+  - L609 `.crash_report`: Text of a report about the last game exit and the current mods, to share with a mod author or an AI chat.
+  - L614 `.check_now`
+  - L620 `.handle_problems`
+  - L630 `.apply`
+  - L665 `.undo`
+  - L685 `._order`: Sort the mod list by `ids`; a mod not in `ids` (added since) goes last, in its old order.
+  - L690 `.auto_sort`: Put the mods in the best load order (the Crash doctor can undo it), then check them for problems.
+  - L703 `.setup_ai`: Download the engine and the model when they are missing (a run from source), then start the engine once.
+  - L717 `.ask_ai`: Check the mods, let the local AI pick fixes and load-order rules, and send the advice to the window.
+  - L749 `.apply_ai`: The order first, so that a fix that moves one mod (prefer) keeps the last word.
+  - L758 `.find_in_video`
+  - L766 `.bisect_begin`
+  - L776 `._bisect_apply`
+  - L787 `.bisect_cancel`
+  - L794 `._bisect_result`
 
-### `manager_ui/ui.py` (1943 lines)
+### `manager_ui/ui.py` (1946 lines)
 The window.
 Uses: ai_link/tools.py, downloads/fetch.py, downloads/nexus.py, local_ai/llm.py, manager_ui/controller.py, shared/store.py
 Used by: app.py
@@ -495,85 +544,85 @@ Used by: app.py
   - L919 `._tab_crash`
   - L964 `._tab_ai`
   - L1005 `._tab_settings`
-  - L1061 `._selected`
-  - L1064 `._safe`
-  - L1070 `.say`
-  - L1073 `.select_all`
-  - L1077 `.close`: No new copy starts.
-  - L1091 `._close_when_free`
-  - L1099 `.redeploy`
-  - L1107 `.launch`
-  - L1120 `.picked_pack`
-  - L1124 `.refresh_packs`
-  - L1130 `.save_pack`
-  - L1143 `.use_pack`
-  - L1150 `.delete_pack`
-  - L1156 `.merge_packs`
-  - L1190 `._mods_hover`: Light up the row under the mouse.
-  - L1201 `._mods_click`: The switch turns a mod on or off; the Actions cell holds update, remove and more.
-  - L1217 `.add_dialog`: Ways to add mods, as a list to pick from.
-  - L1260 `.pack_choice`: A mod pack with optional mods, or with mods that may not work with the game any more: the user picks what to download.
-  - L1302 `.ask_outdated`: A mod that may not work with the game any more: Download it anyway, or Skip it.
-  - L1323 `._hot`
-  - L1327 `._mods_menu`
-  - L1334 `._set_on`
-  - L1338 `.toggle`
-  - L1344 `.move`
-  - L1350 `.auto_sort`
-  - L1354 `.update`
-  - L1360 `.remove`
-  - L1370 `.open_folder`
-  - L1375 `.install_core`
-  - L1381 `._placeholder`
-  - L1389 `._links_text`
-  - L1392 `._count_links`
-  - L1396 `.paste`
-  - L1405 `.add_links`
-  - L1416 `.add_files`
-  - L1424 `.find_video`
-  - L1431 `.show_found`
-  - L1444 `.add_found`
-  - L1452 `.open_found`
-  - L1456 `.setup_ai`
-  - L1464 `.ask_ai`
-  - L1468 `.ask_bug`
-  - L1475 `.show_ai`
-  - L1494 `.copy_setup`: The MCP setup that starts this app as `--mcp` (the exe, or python with app.py when run from source).
-  - L1504 `._job_do`
-  - L1514 `.retry_failed`
-  - L1522 `.clear_jobs`
-  - L1530 `.show_problem`
-  - L1551 `.apply_fix`
-  - L1566 `.undo`
-  - L1573 `.save_report`
-  - L1584 `.copy_report`
-  - L1589 `.open_crash_logs`
-  - L1595 `.bisect_begin`
-  - L1601 `.bisect_cancel`
-  - L1605 `.browse_game`
-  - L1611 `.detect_game`
-  - L1619 `.save_settings`
-  - L1631 `.set_theme`
-  - L1641 `._recolor`: Plain Tk widgets keep the colours they were made with; ttk ones follow _style.
-  - L1659 `.check_key`
-  - L1667 `.register_nxm`
-  - L1676 `.hide_banner`
-  - L1681 `.refresh_settings`
-  - L1696 `.refresh_setup`
-  - L1705 `.refresh_mods`
-  - L1738 `.show_job`
-  - L1748 `.refresh_progress`
-  - L1781 `.refresh_tabs`
-  - L1793 `.refresh_history`
-  - L1799 `.refresh_bisect`
-  - L1808 `.show_problems`
-  - L1828 `.log_line`
-  - L1835 `._drain`
-  - L1882 `._serve`: Second app instances (started by nxm:// links) connect to the named pipe here.
-  - L1894 `._take`: Both sides prove they know the token; only then is the nxm link (or "show") read.
-- L1934 def `run`
+  - L1063 `._selected`
+  - L1066 `._safe`
+  - L1072 `.say`
+  - L1075 `.select_all`
+  - L1079 `.close`: No new copy starts.
+  - L1094 `._close_when_free`
+  - L1102 `.redeploy`
+  - L1110 `.launch`
+  - L1123 `.picked_pack`
+  - L1127 `.refresh_packs`
+  - L1133 `.save_pack`
+  - L1146 `.use_pack`
+  - L1153 `.delete_pack`
+  - L1159 `.merge_packs`
+  - L1193 `._mods_hover`: Light up the row under the mouse.
+  - L1204 `._mods_click`: The switch turns a mod on or off; the Actions cell holds update, remove and more.
+  - L1220 `.add_dialog`: Ways to add mods, as a list to pick from.
+  - L1263 `.pack_choice`: A mod pack with optional mods, or with mods that may not work with the game any more: the user picks what to download.
+  - L1305 `.ask_outdated`: A mod that may not work with the game any more: Download it anyway, or Skip it.
+  - L1326 `._hot`
+  - L1330 `._mods_menu`
+  - L1337 `._set_on`
+  - L1341 `.toggle`
+  - L1347 `.move`
+  - L1353 `.auto_sort`
+  - L1357 `.update`
+  - L1363 `.remove`
+  - L1373 `.open_folder`
+  - L1378 `.install_core`
+  - L1384 `._placeholder`
+  - L1392 `._links_text`
+  - L1395 `._count_links`
+  - L1399 `.paste`
+  - L1408 `.add_links`
+  - L1419 `.add_files`
+  - L1427 `.find_video`
+  - L1434 `.show_found`
+  - L1447 `.add_found`
+  - L1455 `.open_found`
+  - L1459 `.setup_ai`
+  - L1467 `.ask_ai`
+  - L1471 `.ask_bug`
+  - L1478 `.show_ai`
+  - L1497 `.copy_setup`: The MCP setup that starts this app as `--mcp` (the exe, or python with app.py when run from source).
+  - L1507 `._job_do`
+  - L1517 `.retry_failed`
+  - L1525 `.clear_jobs`
+  - L1533 `.show_problem`
+  - L1554 `.apply_fix`
+  - L1569 `.undo`
+  - L1576 `.save_report`
+  - L1587 `.copy_report`
+  - L1592 `.open_crash_logs`
+  - L1598 `.bisect_begin`
+  - L1604 `.bisect_cancel`
+  - L1608 `.browse_game`
+  - L1614 `.detect_game`
+  - L1622 `.save_settings`
+  - L1634 `.set_theme`
+  - L1644 `._recolor`: Plain Tk widgets keep the colours they were made with; ttk ones follow _style.
+  - L1662 `.check_key`
+  - L1670 `.register_nxm`
+  - L1679 `.hide_banner`
+  - L1684 `.refresh_settings`
+  - L1699 `.refresh_setup`
+  - L1708 `.refresh_mods`
+  - L1741 `.show_job`
+  - L1751 `.refresh_progress`
+  - L1784 `.refresh_tabs`
+  - L1796 `.refresh_history`
+  - L1802 `.refresh_bisect`
+  - L1811 `.show_problems`
+  - L1831 `.log_line`
+  - L1838 `._drain`
+  - L1885 `._serve`: Second app instances (started by nxm:// links) connect to the named pipe here.
+  - L1897 `._take`: Both sides prove they know the token; only then is the nxm link (or "show") read.
+- L1937 def `run`
 
-### `shared/store.py` (99 lines)
+### `shared/store.py` (100 lines)
 App data folder, settings and the installed-mod list, kept in one JSON file.
 Used by: app.py, downloads/fetch.py, installer/deploy.py, local_ai/llm.py, manager_ui/controller.py, manager_ui/ui.py
 
@@ -581,14 +630,14 @@ Used by: app.py, downloads/fetch.py, installer/deploy.py, local_ai/llm.py, manag
 - L10 `DATA` (constant)
 - L11 `GAME_EXE` (constant)
 - L12 `DEFAULTS` (constant)
-- L15 def `kind_of`: A mod's file types for people: "Framework", or e.g.
-- L29 class `Store`: mods[0] is the lowest priority; the last mod in the list wins every conflict.
-  - L32 `.__init__`
-  - L51 `.save`
-  - L60 `.mod`
-  - L63 `.enabled`
-  - L66 `.game`
-- L71 def `find_game`: Look in Steam libraries, GOG and Epic for the Cyberpunk 2077 folder.
+- L16 def `kind_of`: A mod's file types for people: "Framework", or e.g.
+- L30 class `Store`: mods[0] is the lowest priority; the last mod in the list wins every conflict.
+  - L33 `.__init__`
+  - L52 `.save`
+  - L61 `.mod`
+  - L64 `.enabled`
+  - L67 `.game`
+- L72 def `find_game`: Look in Steam libraries, GOG and Epic for the Cyberpunk 2077 folder.
 
 ### `tests/ai_bench.py` (130 lines)
 Bug-chat benchmark with the real local AI: `py -u tests/ai_bench.py practice|hidden [model.gguf]`.
@@ -640,13 +689,27 @@ Uses: app.py, manager_ui/ui.py
 - L16 `LINK` (constant)
 - L19 class `StartUp`
 
+### `tests/test_browser.py` (224 lines)
+The hidden-browser auto-clicker: WebSocket framing, the nxm:// capture and the Clicker flow, plus the controller wiring (a waiting job goes to the ...
+Uses: downloads/nexus_browser.py, manager_ui/controller.py, shared/store.py, tests/helpers.py
+
+- L19 def `wait_for`
+- L28 class `WsFraming`
+- L50 class `ScanNxm`
+- L57 class `FakeTab`: A DevTools tab that answers with per-JS values; callables answer freshly each time.
+- L74 class `FakeBrowser`
+- L92 def `job`
+- L96 class `ClickerFlow`
+- L141 class `FakeClicker`: Stands in for the real Clicker in the controller wiring test: records the jobs it is asked to click.
+- L154 class `Wiring`: The controller hands waiting jobs to the clicker, not to the user's browser, when the setting is on.
+
 ### `tests/test_code_map.py` (28 lines)
 tools/code_map.py: the generated index of CODE_MAP.md.
 
 - L6 `ROOT` (constant)
 - L12 class `Index`
 
-### `tests/test_controller.py` (417 lines)
+### `tests/test_controller.py` (418 lines)
 -
 Uses: manager_ui/controller.py, shared/store.py, tests/helpers.py
 

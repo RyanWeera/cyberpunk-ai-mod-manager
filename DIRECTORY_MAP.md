@@ -3,7 +3,7 @@ Start here: `manager_ui/` (the root `app.py` only handles the single window and 
 
 ## Folders
 - `manager_ui/` - window (Tk) and the controller that runs the whole download, install and crash pipeline
-- `downloads/` - link parsing, Nexus API (GraphQL and v1), GitHub releases, file download
+- `downloads/` - link parsing, Nexus API (GraphQL and v1), GitHub releases, file download, hidden-browser auto-click for free Nexus accounts
 - `installer/` - unpack, FOMOD defaults, map files to game folders, deploy into the game folder
 - `crash_doctor/` - game process watch, crash evidence, log diagnosis, archive conflicts, bad-mod search
 - `video_finder/` - find the mods a YouTube, TikTok, Instagram or other video shows, from its description or caption

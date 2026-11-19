@@ -9,7 +9,8 @@ from pathlib import Path
 VERSION = "1.1.0"  # window title, MCP server and the Nexus Application-Version header
 DATA = Path(os.environ.get("CP2077MM_DATA") or Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "CP2077ModManager")
 GAME_EXE = "bin/x64/Cyberpunk2077.exe"
-DEFAULTS = {"game_dir": "", "api_key": "", "virus_scan": True, "auto_fix": True, "include_optional": True, "theme": "Cyberpunk"}
+DEFAULTS = {"game_dir": "", "api_key": "", "virus_scan": True, "auto_fix": True, "include_optional": True,
+            "auto_click": True, "theme": "Cyberpunk"}
 
 
 def kind_of(m):

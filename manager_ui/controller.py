@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from crash_doctor import doctor, watch
-from downloads import nexus
+from downloads import nexus, nexus_browser
 from downloads.fetch import FRAMEWORKS, FW_BY_NEXUS, FW_BY_REPO, download, github_latest
 from installer import deploy, install
 from local_ai import llm
@@ -35,6 +35,11 @@ class Controller:
         self.store, self.notify = store, notify
         self.jobs, self.lock, self.work, self.ids = [], threading.RLock(), queue.Queue(), itertools.count(1)
         self.premium, self.clicking, self.stop = False, None, threading.Event()
+        # Free accounts only: a hidden browser clicks 'Slow download' so no file needs the user (owner decision 2026-11-20;
+        # Nexus's terms disallow the automation, so every failure falls back to the manual click).
+        self.clicker = nexus_browser.Clicker(
+            self.store.root / "browser", log=lambda m: self.notify("log", m), on_link=self.handle_nxm,
+            on_fail=self._manual_click, waiting=lambda j: j["state"] == "waiting")
         self.game_on = False  # the local AI does not run while the game runs: the game gets the whole PC
         for old in store.downloads.glob("job-*"):  # left by jobs that the app's close cut off (only one window runs)
             shutil.rmtree(old, ignore_errors=True)
@@ -233,14 +238,29 @@ class Controller:
         self.notify("confirm", {"link": link, "text": f"Download and install '{name}' (file {link['file_id']}) from Nexus?"})
 
     def _next_click(self):
-        """Free accounts: open the Nexus page of the next waiting file, one at a time."""
+        """Free accounts: the next waiting file, one at a time. With automatic clicks on, the hidden browser
+        clicks 'Slow download'; otherwise the Nexus page is opened for a manual click."""
         with self.lock:
             if self.clicking and self.clicking["state"] == "waiting":
                 return
             self.clicking = j = next((j for j in self.jobs if j["state"] == "waiting"), None)
         if j:
-            self._set(j, "Click 'Slow download' in your browser")
-            self.reopen(j)
+            if self.store.settings["auto_click"]:
+                self._set(j, "Clicking 'Slow download' for you")
+                self.bg(self.clicker.click, j)
+            else:
+                self._set(j, "Click 'Slow download' in your browser")
+                self.reopen(j)
+
+    def _manual_click(self, j, why):
+        """The hidden browser could not click (no login, Nexus changed its page, ...): back to the manual way."""
+        if self.stop.is_set():  # the window is closing: no browser may open now
+            return
+        with self.lock:
+            if j["state"] != "waiting":
+                return
+        self.notify("log", f"Automatic click failed ({why}). I opened the Nexus page again: click 'Slow download' there.")
+        self.reopen(j)
 
     def reopen(self, j):
         webbrowser.open(nexus.files_page(j["src"]["mod_id"], j["src"]["file_id"]))

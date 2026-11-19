@@ -96,6 +96,7 @@ class Pipeline(unittest.TestCase):
 
     def test_free_account_waits_for_click_then_downloads(self):
         self.store.settings["api_key"] = "k"
+        self.store.settings["auto_click"] = False  # the manual-click way: the hidden browser is tested in test_browser
         z = make_zip(self.tmp / "nx.zip", {"a.archive": "x"})
         with mock.patch.object(ctl_mod.nexus, "mod_info", lambda mid, key="": {"name": "Nx", "version": "1", "requires": [],
                                                                              "files": [{"fileId": 7, "name": "Nx", "version": "1", "category": "MAIN", "primary": 1, "date": 1}]}), \

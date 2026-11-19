@@ -1042,17 +1042,19 @@ class App:
         for row, (key, text) in enumerate([
                 ("virus_scan", "Scan every download for viruses with Microsoft Defender (turn off to go faster with many mods)"),
                 ("auto_fix", "After a crash, fix a problem by myself when it has only one fix"),
-                ("include_optional", "Tick the optional mods of a mod pack at first")], start=9):
+                ("include_optional", "Tick the optional mods of a mod pack at first"),
+                ("auto_click", "Click 'Slow download' on Nexus for me in a hidden browser "
+                               "(a free account logs in to Nexus once, then no file needs a click)")], start=9):
             v = self.flags[key] = tk.BooleanVar(value=st[key])
             ttk.Checkbutton(f, text=text, variable=v, command=self.save_settings).grid(row=row, column=0, columnspan=3, sticky="w", pady=3)
-        ttk.Label(f, text="Style").grid(row=12, column=0, sticky="w", pady=(10, 3))
+        ttk.Label(f, text="Style").grid(row=13, column=0, sticky="w", pady=(10, 3))
         self.theme_var = tk.StringVar(value=st["theme"])
         pick = ttk.Frame(f)
-        pick.grid(row=12, column=1, columnspan=2, sticky="w", pady=(10, 3))
+        pick.grid(row=13, column=1, columnspan=2, sticky="w", pady=(10, 3))
         for name in THEMES:
             ttk.Radiobutton(pick, text=name, value=name, variable=self.theme_var, command=self.set_theme).pack(side="left", padx=(0, 14))
         foot = ttk.Frame(f)
-        foot.grid(row=13, column=0, columnspan=3, sticky="we", pady=(22, 0))
+        foot.grid(row=14, column=0, columnspan=3, sticky="we", pady=(22, 0))
         ttk.Button(foot, text="Open data folder", command=lambda: os.startfile(self.store.root)).pack(side="right")
         ttk.Label(foot, style="Dim.TLabel", text=f"Mods, backups and settings are kept in {self.store.root}").pack(side="left", fill="x")
         self.refresh_settings()
@@ -1080,6 +1082,7 @@ class App:
         if self.ctl.stop.is_set():
             return
         self.ctl.stop.set()
+        self.ctl.clicker.close()  # the hidden Nexus browser must not outlive the window
         llm.block()  # at once: a copy that still runs does not need the local AI
         self.say("Finishing the current copy into the game folder…")
         try:
