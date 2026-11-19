@@ -423,6 +423,21 @@ class Window(unittest.TestCase):
         self.assertIn("sends files to this app", app.nxm_info.cget("text"))
         self.assertEqual(app.nxm_btn.cget("text"), "Set it up again")
 
+    def test_update_asks_first_and_turns_the_button_back_on(self):
+        app, rel = self.app, {"tag": "v9.0.0", "url": "https://x/a.exe"}
+        with mock.patch.object(app.ctl, "bg") as bg:
+            app.update_app()
+        bg.assert_called_once_with(app.ctl.update_app)
+        self.assertTrue(app.update_btn.instate(["disabled"]))  # no second update while one runs
+        with mock.patch.object(ui.messagebox, "askyesno", return_value=False):
+            app.show_update({"ask": rel})
+        self.assertFalse(app.update_btn.instate(["disabled"]))
+        with mock.patch.object(ui.messagebox, "askyesno", return_value=True), mock.patch.object(app.ctl, "bg") as bg:
+            app.show_update({"ask": rel})
+        bg.assert_called_once_with(app.ctl.update_app, rel)
+        app.show_update({"text": "Update failed: offline"})
+        self.assertFalse(app.update_btn.instate(["disabled"]))
+
     def test_my_mod_packs_page(self):
         app = self.app
         self.store.mods = [mod("a", [], name="Alpha")]
@@ -440,6 +455,11 @@ class Window(unittest.TestCase):
         app.pack_open.add("Neon City")
         app.refresh_pack_page()
         self.assertIn("Neon Signs   (not installed yet)", text(cards()[0]))
+        [done] = [b for f in cards()[0].winfo_children() if isinstance(f, ttk.Frame) for b in f.winfo_children()
+                  if isinstance(b, ttk.Button) and b.cget("text") == "Complete installation"]
+        with mock.patch.object(app.ctl, "complete_pack", return_value=1) as complete:
+            done.invoke()
+        complete.assert_called_once_with("Neon City")
         app.packs_show.set("all")
         app.packs_q.set("mine")
         with mock.patch.object(app, "redeploy") as redeploy:

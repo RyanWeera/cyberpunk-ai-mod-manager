@@ -47,6 +47,23 @@ def github_latest(repo):
     return {"tag": d["tag_name"], "url": asset["browser_download_url"], "name": asset["name"]}
 
 
+APP_REPO = "RyanWeera/cyberpunk-ai-mod-manager"
+
+
+def app_latest():
+    """{"tag", "url"} of the exe in this app's newest GitHub release, or None when this version is the newest."""
+    d = http_json(f"https://api.github.com/repos/{APP_REPO}/releases/latest")
+    ver = lambda s: tuple(int(n) for n in re.findall(r"\d+", s))
+    if ver(d["tag_name"]) <= ver(VERSION):
+        return None
+    own = f"https://github.com/{APP_REPO}/releases/download/"  # only this repo's release files
+    asset = next((a for a in d.get("assets", []) if a["name"].lower().endswith(".exe")
+                  and a["browser_download_url"].startswith(own)), None)
+    if not asset:
+        raise RuntimeError(f"Release {d['tag_name']} has no exe to download")
+    return {"tag": d["tag_name"], "url": asset["browser_download_url"]}
+
+
 def ascii_name(name):
     """A plain ASCII file name. Windows tools that read their command line in the ANSI code page turn some
     Unicode letters into quotes ("best-fit"), so a server-chosen name must never reach them as it is."""

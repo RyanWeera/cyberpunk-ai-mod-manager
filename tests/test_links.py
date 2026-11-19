@@ -15,6 +15,21 @@ class FileNames(unittest.TestCase):
         self.assertEqual(ascii_name("..."), "download.zip")
 
 
+class AppUpdate(unittest.TestCase):
+    def test_only_a_newer_release_counts(self):
+        from downloads import fetch
+        exe = f"https://github.com/{fetch.APP_REPO}/releases/download/v1.10.0/CP2077.AI.Mod.Manager.exe"
+        rel = lambda tag, url=exe: {"tag_name": tag, "assets": [{"name": "Notes.txt", "browser_download_url": "https://x/n"},
+                                                                {"name": "CP2077.AI.Mod.Manager.exe", "browser_download_url": url}]}
+        with mock.patch.object(fetch, "VERSION", "1.1.0"):
+            for tag, want in (("v1.1.0", None), ("v1.0.9", None), ("v1.10.0", {"tag": "v1.10.0", "url": exe})):
+                with mock.patch.object(fetch, "http_json", return_value=rel(tag)):
+                    self.assertEqual(fetch.app_latest(), want, tag)
+            with mock.patch.object(fetch, "http_json", return_value=rel("v2.0.0", "https://evil.example/a.exe")), \
+                    self.assertRaises(RuntimeError):
+                fetch.app_latest()  # an exe from anywhere else is not used
+
+
 class Outdated(unittest.TestCase):
     def test_reasons_a_mod_may_not_work(self):
         self.assertEqual(outdated("Better Cars", "published", "2025-01-01T00:00:00Z"), "")

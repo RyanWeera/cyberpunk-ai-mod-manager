@@ -257,6 +257,48 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(self.store.packs, {"My Pack": [["nexus-5-50", True]]})
         self.assertEqual(self.store.pack_info["My Pack"]["names"]["nexus-5-50"], "Car")  # the My mod packs page shows it
 
+    def test_complete_pack_downloads_only_the_missing_nexus_mods(self):
+        c = self.controller()
+        self.store.mods = [mod("nexus-5-50", [])]
+        self.store.packs["P"] = [["nexus-5-50", True], ["nexus-6-60", True], ["nexus-7-70", True], ["local-x", True]]
+        self.store.pack_info["Other"] = {"url": "", "names": {"nexus-6-60": "Lights"}}  # a merged pack has no names
+        with mock.patch.object(c, "bg", lambda fn, *a: fn(*a)), mock.patch.object(c, "_add") as add, \
+                mock.patch.object(ctl_mod.nexus, "mod_names", return_value={7: {"name": "Rain"}}) as names:
+            self.assertEqual(c.complete_pack("P"), 2)
+        names.assert_called_once_with([7])
+        self.assertEqual([a.args[0] for a in add.call_args_list],
+                         [{"type": "nexus", "mod_id": 6, "file_id": 60, "name": "Lights"},
+                          {"type": "nexus", "mod_id": 7, "file_id": 70, "name": "Rain"}])
+
+    def test_update_app_swaps_in_the_newest_release_exe(self):
+        c = self.controller()
+        new = self.tmp / "new.exe"
+        updates = lambda: [p for k, p in list(self.events.queue) if k == "update"]
+        rel = {"tag": "v9.0.0", "url": "https://x/a.exe"}
+        with mock.patch.object(ctl_mod.sys, "frozen", True, create=True), \
+                mock.patch.object(ctl_mod, "app_latest", return_value=rel), \
+                mock.patch.object(ctl_mod, "download", return_value=new) as download, \
+                mock.patch.object(ctl_mod.subprocess, "Popen") as popen:
+            c.update_app()
+            self.assertEqual(updates()[-1], {"ask": rel})  # the window asks before anything downloads
+            download.assert_not_called()
+            for result, says in (((False, "Trojan"), "found Trojan"), ((None, "no Defender"), "could not scan")):
+                with mock.patch.object(ctl_mod.scan, "scan", return_value=result):
+                    c.update_app(rel)
+                self.assertIn(says, updates()[-1]["text"])
+                self.assertNotIn("restart", updates()[-1])  # the button turns back on
+            popen.assert_not_called()  # a file Defender flags, or could not scan, never runs
+            with mock.patch.object(ctl_mod.scan, "scan", return_value=(True, "")):
+                c.update_app(rel)
+        env = popen.call_args.kwargs["env"]
+        self.assertEqual((env["CP_NEW"], env["CP_EXE"], env["PYINSTALLER_RESET_ENVIRONMENT"]),
+                         (str(new), ctl_mod.sys.executable, "1"))
+        self.assertTrue(updates()[-1]["restart"])  # the window closes so the script can swap the exe
+        with mock.patch.object(ctl_mod.sys, "frozen", True, create=True), \
+                mock.patch.object(ctl_mod, "app_latest", return_value=None):
+            c.update_app()
+        self.assertIn("newest version", updates()[-1]["text"])
+
     def test_a_pack_with_optional_or_outdated_mods_asks_first(self):
         files = [{"mod_id": 5, "file_id": 50, "optional": False, "name": "Car", "version": "1", "outdated": ""},
                  {"mod_id": 6, "file_id": 60, "optional": True, "name": "Extra", "version": "1", "outdated": ""},

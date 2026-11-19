@@ -801,6 +801,8 @@ class App:
             self.pack_open.symmetric_difference_update({name})
             self.refresh_pack_page()
         for text, style, cmd, tip in (
+                *((("Complete installation", "Get.TButton", lambda: self.complete_pack(name),
+                    "Download and install this pack's mods that are not installed yet."),) if missing else ()),
                 ("Use", "Get.TButton", lambda: self.use_pack(name), "Turn on this pack's mods in its order and turn off the rest."),
                 ("▶  Launch", "TButton", lambda: self.launch_pack(name), "Start the game with this pack."),
                 ("Hide mods" if is_open else "Show mods", "TButton", toggle, "The mods in this pack, lowest priority first."),
@@ -1046,11 +1048,32 @@ class App:
         pick.grid(row=12, column=1, columnspan=2, sticky="w", pady=(10, 3))
         for name in THEMES:
             ttk.Radiobutton(pick, text=name, value=name, variable=self.theme_var, command=self.set_theme).pack(side="left", padx=(0, 14))
+        ttk.Label(f, text="App").grid(row=13, column=0, sticky="w", pady=(10, 3))
+        ttk.Label(f, text=f"Version {VERSION}", style="Dim.TLabel").grid(row=13, column=1, sticky="w", padx=8, pady=(10, 3))
+        self.update_btn = ttk.Button(f, text="Update", command=self.update_app)
+        self.update_btn.grid(row=13, column=2, sticky="w", pady=(10, 3))
+        Tip(self.update_btn, "Get the newest version of this app from GitHub. The app restarts by itself.")
         foot = ttk.Frame(f)
-        foot.grid(row=13, column=0, columnspan=3, sticky="we", pady=(22, 0))
+        foot.grid(row=14, column=0, columnspan=3, sticky="we", pady=(22, 0))
         ttk.Button(foot, text="Open data folder", command=lambda: os.startfile(self.store.root)).pack(side="right")
         ttk.Label(foot, style="Dim.TLabel", text=f"Mods, backups and settings are kept in {self.store.root}").pack(side="left", fill="x")
         self.refresh_settings()
+
+    def update_app(self):
+        self.update_btn.state(["disabled"])  # one update at a time; every "update" event says when it may click again
+        self.say("Looking for a new version on GitHub…")
+        self.ctl.bg(self.ctl.update_app)
+
+    def show_update(self, p):
+        if "ask" in p:
+            if messagebox.askyesno("Update", f"Version {p['ask']['tag']} is on GitHub (you have {VERSION}).\n\n"
+                                             "Download it, scan it with Microsoft Defender and restart the app with it?"):
+                return self.ctl.bg(self.ctl.update_app, p["ask"])
+            p = {"text": "Update skipped."}
+        self.say(p["text"])
+        self.update_btn.state(["disabled"] if p.get("busy") or p.get("restart") else ["!disabled"])
+        if p.get("restart"):
+            self.close()
 
     # ---------- helpers ----------
     def _selected(self, tree):
@@ -1141,6 +1164,13 @@ class App:
             return messagebox.showinfo("Mod packs", "Pick a mod pack next to 'Launch game' first.")
         self.say(self.ctl.use_pack(pack))
         return self.redeploy()
+
+    def complete_pack(self, pack):
+        n = self.ctl.complete_pack(pack)
+        if not n:
+            return self.say(f"I cannot download the missing mods of '{pack}': they did not come from Nexus.")
+        self.say(f"Installing {n} mod(s) of '{pack}'. Follow them in the Downloads tab.")
+        self.tabs.select(self.tab["Downloads"])
 
     def delete_pack(self, pack=None):
         pack = pack or self.picked_pack()
@@ -1845,6 +1875,8 @@ class App:
                     self.ai_info.configure(text=p, foreground=OK if p.startswith("✔") else BAD if p.startswith("✖") else DIM)
                 elif kind == "ai":
                     self.show_ai(p)
+                elif kind == "update":
+                    self.show_update(p)
                 elif kind == "pack_choice":
                     self.pack_choice(p)
                 elif kind == "outdated":
