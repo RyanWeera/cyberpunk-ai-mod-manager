@@ -25,6 +25,7 @@ def scan(path):
     if r.returncode == 0:
         return True, ""
     lines = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
-    if r.returncode == 2:
-        return False, "; ".join(ln for ln in lines if "Threat" in ln or "threat" in ln)[:300] or "Threat found"
-    return None, (lines[-1] if lines else f"Defender exit code {r.returncode}")
+    if r.returncode == 2:  # only the threat names: Defender's own lines hold the full path, with the Windows user name
+        names = [ln.split(":", 1)[1].strip() for ln in lines if ln.startswith("Threat ") and ":" in ln]
+        return False, ", ".join(dict.fromkeys(names)) or "Threat found"
+    return None, (lines[-1].replace(str(path), Path(path).name) if lines else f"Defender exit code {r.returncode}")

@@ -1,7 +1,6 @@
 """The AI-app link (MCP server and its tools) and the local AI's answer checks, with no real AI app or model."""
 import io
 import json
-import os
 import shutil
 import tempfile
 import threading
@@ -12,7 +11,7 @@ from unittest import mock
 
 from ai_link import mcp, tools
 from crash_doctor import doctor
-from local_ai import ollama
+from local_ai import llm
 from shared.store import Store
 from tests.helpers import mod
 
@@ -78,6 +77,14 @@ class Tools(unittest.TestCase):
         self.assertIn("error", self.run_tool("status", extra=1))
         self.assertIn("error", tools.run(self.ctl, "{not json"))
 
+    def test_the_home_folder_never_goes_to_the_ai_app(self):
+        bad = str(Path.home()) + "\\x\\a.zip"
+        self.ctl.jobs = [{"name": "M", "status": f"Failed: {bad} {bad!r} {bad.replace(chr(92), '/')}", "state": "failed"}]
+        text = self.run_tool("status")["text"]
+        for form in (str(Path.home()), str(Path.home()).replace("\\", "\\\\"), str(Path.home()).replace("\\", "/")):
+            self.assertNotIn(form.lower(), text.lower())
+        self.assertIn("~\\x\\a.zip", text)
+
 
 class LocalAi(unittest.TestCase):
     def test_advice_keeps_only_real_picks(self):
@@ -88,47 +95,91 @@ class LocalAi(unittest.TestCase):
                    {"summary": " S ", "fixes": [{"problem": 1, "fix": 2, "why": "w"}, {"problem": 1, "fix": 1, "why": ""},
                                                  {"problem": 2, "fix": 5, "why": ""}, {"problem": 3, "fix": 1, "why": ""},
                                                  {"problem": True, "fix": 1, "why": ""}]}]
-        with mock.patch.object(ollama, "chat", side_effect=answers) as chat:
-            a = ollama.advise("m", mods, probs)
+        with mock.patch.object(llm, "chat", side_effect=answers) as chat:
+            a = llm.advise(mods, probs)
         self.assertEqual(a["after"], [("a", "patch"), ("b", "patch")])
         self.assertEqual([(p["id"], f["label"], why) for p, f, why in a["fixes"]], [("p1", "Turn A off", "w")])
         self.assertEqual(a["summary"], "S")
         first = chat.call_args_list[0].args
-        self.assertIn("1. A - Patch for B", first[2])
-        self.assertEqual(first[3]["properties"]["builds_on"]["required"], ["1", "2", "3"])
-        self.assertIn("P2 (low) t2: d2", chat.call_args_list[1].args[2])
+        self.assertIn("1. A - Patch for B", first[1])
+        self.assertEqual(first[2]["properties"]["builds_on"]["required"], ["1", "2", "3"])
+        self.assertIn("P2 (low) t2: d2", chat.call_args_list[1].args[1])
+
+    def test_bug_report_gives_a_cause_and_only_real_mod_fixes(self):
+        mods = [mod("car", [], name="Car", enabled=False), mod("b", [], name="B")]
+        answers = [{"builds_on": {}}, {"summary": "s", "fixes": [], "cause": " The car is off. ", "mod_fixes": [
+            {"mod": 1, "action": "turn_on", "why": "w"}, {"mod": 3, "action": "turn_on", "why": ""},
+            {"mod": 2, "action": "delete", "why": ""}, {"mod": True, "action": "update", "why": ""}, "x"]}]
+        with mock.patch.object(llm, "chat", side_effect=answers) as chat:
+            a = llm.advise(mods, [], "My car is missing")
+        self.assertEqual(a["cause"], "The car is off.")
+        self.assertEqual([(m["id"], act, why) for m, act, why in a["mod_fixes"]], [("car", "turn_on", "w")])
+        system, user, schema = chat.call_args_list[1].args
+        self.assertIn("describes a bug", system)
+        self.assertIn("Problems found:\nnone", user)
+        self.assertIn("The player says: My car is missing", user)
+        self.assertIn("mod_fixes", schema["required"])
 
     def test_no_problems_asks_only_about_the_order(self):
-        with mock.patch.object(ollama, "chat", return_value={"builds_on": []}) as chat:
-            a = ollama.advise("m", [mod("a", [])], [])
+        with mock.patch.object(llm, "chat", return_value={"builds_on": []}) as chat:
+            a = llm.advise([mod("a", [])], [])
         self.assertEqual(chat.call_count, 1)
         self.assertEqual(a, {"summary": "The Crash doctor found no problems.", "fixes": [], "after": []})
 
-    def test_has_model_adds_latest(self):
-        with mock.patch.object(ollama, "http_json", return_value={"models": [{"name": "llama3.2:latest"}, {"name": "qwen3.5:4b"}]}):
-            self.assertTrue(ollama.has_model("llama3.2"))
-            self.assertTrue(ollama.has_model("qwen3.5:4b"))
-            self.assertFalse(ollama.has_model("qwen3.5:9b"))
+    def test_a_download_with_the_wrong_hash_is_deleted(self):
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d)
+        f = d / "x.bin"
+        f.write_bytes(b"abc")
+        good = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        self.assertEqual(llm.checked(f, good), f)
+        with self.assertRaises(RuntimeError):
+            llm.checked(f, "0" * 64)
+        self.assertFalse(f.exists())
 
-    def test_ollama_is_never_taken_from_the_current_folder(self):
-        here = tempfile.mkdtemp()
-        Path(here, "ollama.exe").write_bytes(b"")
-        self.addCleanup(shutil.rmtree, here)
-        self.addCleanup(os.chdir, os.getcwd())  # runs first: a folder in use cannot be removed
-        os.chdir(here)
-        with mock.patch.object(ollama, "HOME", Path(here, "none")):
-            with mock.patch.dict(os.environ, {"PATH": ";.;"}):  # empty and relative PATH entries mean this folder too
-                self.assertIsNone(ollama.exe())
-            with mock.patch.dict(os.environ, {"PATH": here}):
-                self.assertEqual(ollama.exe(), str(Path(here, "ollama.exe")))
+    def test_start_needs_the_files_and_stop_ends_the_engine(self):
+        with (mock.patch.object(llm, "ready", return_value=False), mock.patch.object(llm, "_server", None),
+              mock.patch.object(llm, "_blocked", False), self.assertRaises(RuntimeError, msg="files are missing")):
+            llm.start()
+        proc = mock.Mock()
+        with mock.patch.object(llm, "_server", proc):
+            llm.stop()
+            self.assertIsNone(llm._server)
+        proc.kill.assert_called_once_with()
+        llm.stop()  # nothing runs: no error
 
-    def test_pull_progress_counts_every_file(self):
-        lines = [{"digest": "a", "total": 90, "completed": 90}, {"digest": "b", "total": 10, "completed": 5}]
-        seen = []
-        with mock.patch.object(ollama.urllib.request, "urlopen") as urlopen:
-            urlopen.return_value.__enter__.return_value = [json.dumps(d).encode() for d in lines]
-            ollama.pull("m", seen.append)
-        self.assertEqual(seen, [100, 95])  # the small second file does not start the bar again at 0
+    def test_a_blocked_engine_does_not_start(self):
+        with mock.patch.object(llm, "_blocked", False), mock.patch.object(llm, "_server", None),                 mock.patch.object(llm.subprocess, "Popen") as popen:
+            llm.block()
+            with self.assertRaises(RuntimeError) as e:
+                llm.start()
+            self.assertEqual(str(e.exception), llm.BLOCKED)
+            popen.assert_not_called()
+
+    def test_the_game_starts_while_the_model_loads(self):
+        proc = mock.Mock()
+        proc.poll.return_value = None
+
+        def health(*a, **k):  # the game starts while the engine loads the model
+            llm.block()
+            return {"status": "ok"}
+        with mock.patch.object(llm, "_blocked", False), mock.patch.object(llm, "_server", None),                 mock.patch.object(llm, "ready", return_value=True), mock.patch.object(llm.subprocess, "Popen", return_value=proc),                 mock.patch.object(llm, "http_json", health):
+            with self.assertRaises(RuntimeError) as e:
+                llm.start()
+            self.assertEqual(str(e.exception), llm.BLOCKED)
+            proc.kill.assert_called_once_with()  # the engine does not run next to the game
+            self.assertIsNone(llm._server)
+
+    def test_chat_asks_for_json_without_thinking(self):
+        reply = {"choices": [{"message": {"content": '{"a": 1}'}}]}
+        with mock.patch.object(llm, "http_json", return_value=reply) as h, mock.patch.object(llm, "KEY", "k1"):
+            self.assertEqual(llm.chat("sys", "user", {"type": "object"}), {"a": 1})
+        body = h.call_args.args[1]
+        self.assertTrue(h.call_args.args[0].endswith("/v1/chat/completions"))
+        self.assertEqual(body["response_format"]["json_schema"]["schema"], {"type": "object"})
+        self.assertFalse(body["chat_template_kwargs"]["enable_thinking"])
+        self.assertEqual([m["role"] for m in body["messages"]], ["system", "user"])
+        self.assertEqual(h.call_args.args[2], {"Authorization": "Bearer k1"})  # the engine only answers the app
 
 
 if __name__ == "__main__":

@@ -33,14 +33,19 @@ The yellow banner at the top of the app shows which set-up steps are still missi
 - **Find mod from video.** Paste a YouTube, TikTok, Instagram or other video link. The app reads the video's description or caption and lists the mods it links or names, and you add them with one click. YouTube works best, because its descriptions have the mod links. The app does not watch the video, so a mod that is only shown on screen is not found.
 - **Automatic set-up.** Every archive is unpacked and each file goes to the folder the game loads it from (`archive/pc/mod`, `r6/scripts`, `r6/tweaks`, `red4ext/plugins`, Cyber Engine Tweaks mods, REDmod). FOMOD installers run with their default choices. Missing frameworks are installed by themselves.
 - **No-click frameworks.** RED4ext, Cyber Engine Tweaks, redscript, ArchiveXL, TweakXL, Codeware, Input Loader and Mod Settings download from their GitHub releases, with no account.
-- **Crash doctor.** The app watches the game. After a crash it reads the exit code, the game's crash dump, Windows crash events and the framework logs (redscript, RED4ext, ArchiveXL, TweakXL, CET) to find the mod that caused it.
+- **Crash doctor.** The app watches the game. After a crash it reads the exit code, the game's crash dump, Windows crash events and the framework logs (redscript, RED4ext, ArchiveXL, TweakXL, CET) to find the mod that caused it. It also lists the mods found on the crashing thread's call path, explains the Windows error code in plain words, and reads the report of the [Advanced Crash Reporter](https://www.nexusmods.com/cyberpunk2077/mods/34403) mod when you have it installed.
+- **Freezes.** When the game stops responding for about 25 seconds (20 seconds after Windows shows "Not responding"), the app takes a snapshot of every game thread. If the game never comes back, the Crash doctor names the mod code found on the game's main thread (the first thread in the snapshot).
+- **More crash clues.** The Crash doctor also shows where in a DLL mod the crash happened (and the function name when the mod ships its `.pdb` file), DLL mods that take more than 3 seconds to load, mods you installed by hand that changed in the last 7 days, and a game update since the last launch that worked (frameworks often need an update after a patch).
+- **Crash report.** **Save crash report** (Crash doctor tab) writes one text file about the last crash or freeze and your mods, to share with a mod author. Folder paths of your PC are hidden in it.
   - One possible fix: it is applied automatically (you can turn this off).
   - More than one fix (update, turn off, change the load order): you pick.
   - Every fix can be undone.
   - No clue in the logs: "Find the bad mod for me" turns half of the mods off per game start until the bad one is found.
+- **Styles.** Pick Cyberpunk (yellow), Arasaka (red) or Militech (amber) in the Settings tab. The window changes at once.
+- **Mod profiles (mod packs).** Keep different sets of mods for different play-throughs. In the Mods tab, turn on the mods you want and press **Save as pack…**: the pack keeps which mods are on and their order. Pick a pack next to **Launch game** to play with it, or press **Use pack** to set the list to it and apply it to the game now. A pack turns off the mods it does not list, but a framework that is on stays on. Each Nexus collection you add is a pack too, and **Merge packs…** makes one pack from several. Mods stay installed when you switch, so switching is fast.
 - **Load order and conflicts.** Mods lower in the list win. Archive conflicts are found by reading the `.archive` file indexes, and you choose which mod wins. **Auto-sort** (Mods tab) sorts the list for you: frameworks first, each mod below the mods it needs, and a small patch below the big mod it changes. You can undo it in the Crash doctor tab.
 - **Use Claude or another AI app.** Give a mod link or a video link to Claude and ask it to set the mods up. The app is an MCP server: Claude Desktop, Claude Code, Cursor and other MCP apps can add Nexus Mods mods and collections and the core frameworks, sort the load order and check for problems through the app's window. Other GitHub links and direct download links you paste yourself. The **AI helpers** tab copies the setup for you. With a free Nexus account you still click "Slow download" for each Nexus file.
-- **Local AI (optional).** The **AI helpers** tab can download a free AI model that runs on your PC with [Ollama](https://ollama.com) (about 3 GB, no account, offline after the download). **Ask the local AI** (Crash doctor tab) lets it read your mods and problems, pick fixes and find patches that must load after the mod they change. You see each change first, and you can undo it. It is a general AI model that gets the app's modding rules; it was not trained only for Cyberpunk.
+- **Local AI.** The app comes with a free AI model (Qwen3.5 2B, Apache 2.0 license, tuned to debug Cyberpunk 2077 mods: see `local_ai/MODEL.md`) and the [llama.cpp](https://github.com/ggml-org/llama.cpp) engine (MIT license) in its `local_ai` folder: no install, no account, offline. It runs only while the app is open and the game is not running, so the game gets your whole PC. **Ask the local AI** (Crash doctor tab) lets it read your mods and problems, pick fixes and find patches that must load after the mod they change. In the **AI helpers** tab you can describe a bug in your own words: the AI tells you why it happens and offers fixes. You see each change first, and you can undo it.
 - **Virus scan.** Every download is scanned with Microsoft Defender before it is installed. Turn it off in Settings to go faster with big mod lists.
 - **Safe to undo.** Mods stay in their own folder and are copied into the game. Game files that a mod replaces are backed up and put back when the mod is removed.
 
@@ -59,15 +64,14 @@ If you click a "Mod Manager Download" button on Nexus yourself (not on a page th
 ## Download, check and remove
 
 - **Every version:** the [Releases](../../releases) page.
-- **Check the file (optional):** each release lists the file's SHA-256. In PowerShell, run `Get-FileHash .\CP2077.AI.Mod.Manager.exe` and compare.
-- **Update:** close the app, download the newest exe and replace the old one. Your mods and settings stay. If the new exe is in a different folder or has a different name, click **Use this app for Nexus downloads** again, and copy the AI app setup again (**AI helpers** tab). The version is shown in the title bar.
+- **Check the file (optional):** each release lists the zip's SHA-256. In PowerShell, run `Get-FileHash .\CP2077.AI.Mod.Manager.zip` and compare. Unpack the zip to a folder of its own and start the exe in it.
+- **Update:** close the app, download the newest zip and unpack it over the old folder. Your mods and settings stay. If the new exe is in a different folder or has a different name, click **Use this app for Nexus downloads** again, and copy the AI app setup again (**AI helpers** tab). The version is shown in the title bar.
 - **Remove:**
   1. In the **Mods** tab, clear the **Search** box, click any mod, press **Ctrl+A**, then click **Turn on / off** until every row shows ○. This takes the mods' files out of the game folder and puts back the game files (and your own `modlist.txt`) that they replaced.
   2. Wait until the status bar says the mods are set up in the game folder, then close the app.
-  3. Delete the exe and the `%LOCALAPPDATA%\CP2077ModManager` folder.
+  3. Delete the app's folder (the exe and its `local_ai` folder) and the `%LOCALAPPDATA%\CP2077ModManager` folder.
   4. Nexus download buttons still point to the deleted app. If you use another mod manager (Vortex, Mod Organizer 2), set it up for Nexus downloads again. If not, run `reg delete HKCU\Software\Classes\nxm /f` in a Command Prompt.
   5. If you set up an AI app, remove `cp2077-ai-mod-manager` from it. In Claude Code, run `claude mcp remove --scope user cp2077-ai-mod-manager`. In Claude Desktop, delete its entry in **Settings > Developer > Edit Config**.
-  6. If you downloaded the local AI, uninstall **Ollama** in Windows **Settings > Apps**. Then delete the `%USERPROFILE%\.ollama` folder if it is still there (it holds the AI model).
 
 Requirements: Windows 11, or Windows 10 (the app uses the built-in `tar.exe` and Microsoft Defender). The `tar.exe` in Windows 10 is older and cannot unpack some `.7z` and `.rar` mods; the app then says so.
 
@@ -88,12 +92,23 @@ Mods, backups and settings (including your Nexus API key) are kept in `%LOCALAPP
 ```
 python -m unittest discover -s tests -t .     # unit tests
 python -u tests/e2e_crash.py                  # real-crash end-to-end check (about 1 minute)
+python -u tests/ai_bench.py practice          # bug-chat benchmark with the real local AI (about 1 minute)
 ```
 
 Build the exe:
 
 ```
 python -m PyInstaller --noconfirm --clean --windowed --onefile --name "CP2077 AI Mod Manager" --icon manager_ui/icon.ico --add-data "manager_ui/icon.png;manager_ui" --paths . app.py
+```
+
+Then put the exe and the local AI into one zip (PowerShell). The first line downloads the engine and the model into `local_ai` if they are not there yet (about 1.3 GB, SHA-256 checked):
+
+```
+python -c "from local_ai import llm; llm.fetch(lambda what, done, total: None)"
+New-Item -ItemType Directory release\local_ai -Force
+Copy-Item "dist\CP2077 AI Mod Manager.exe" release\
+Copy-Item -Recurse local_ai\engine, local_ai\model, local_ai\MODEL.md release\local_ai\
+Compress-Archive release\* CP2077.AI.Mod.Manager.zip -Force
 ```
 
 ## Disclaimer

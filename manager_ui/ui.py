@@ -10,13 +10,29 @@ import webbrowser
 from multiprocessing import AuthenticationError
 from multiprocessing.connection import answer_challenge, deliver_challenge
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from ai_link import tools
-from local_ai import ollama
+from local_ai import llm
 from manager_ui.controller import CORE, Controller
-from shared.store import DEFAULTS, VERSION, Store, find_game, kind_of
-BG, PANEL, PANEL2, FG, DIM, ACCENT = "#0e1016", "#181b24", "#232837", "#e8e8e8", "#8a8f9c", "#fcee0a"
+from shared.store import VERSION, Store, find_game, kind_of
+# HOT = accent under the mouse, INK = text on the accent, SEL = selected rows and text
+THEMES = {
+    "Cyberpunk": {"BG": "#0e1016", "PANEL": "#181b24", "PANEL2": "#232837", "FG": "#e8e8e8", "DIM": "#8a8f9c", "ACCENT": "#fcee0a",
+                  "HOT": "#fff35c", "INK": "#000000", "HOVER": "#30364a", "SEL": "#3a3f12", "BANNER": "#2b2610"},
+    "Arasaka": {"BG": "#0a0a0b", "PANEL": "#151517", "PANEL2": "#212125", "FG": "#f2f2f2", "DIM": "#8e8e96", "ACCENT": "#e3122d",
+                "HOT": "#ff3b52", "INK": "#ffffff", "HOVER": "#33333a", "SEL": "#4a0c15", "BANNER": "#2a0b10"},
+    "Militech": {"BG": "#0f120d", "PANEL": "#191e16", "PANEL2": "#252c20", "FG": "#e4e8dc", "DIM": "#8c947e", "ACCENT": "#f29d35",
+                 "HOT": "#ffb85c", "INK": "#000000", "HOVER": "#343d2c", "SEL": "#3e3216", "BANNER": "#2b2311"},
+}
+BG = PANEL = PANEL2 = FG = DIM = ACCENT = HOT = INK = HOVER = SEL = BANNER = ""  # set by use_theme
+
+
+def use_theme(name):
+    globals().update(THEMES.get(name) or THEMES["Cyberpunk"])
+
+
+use_theme("Cyberpunk")
 OK, BAD, WARN = "#3ddc84", "#ff6b6b", "#ffb347"
 KEY_PAGE = "https://next.nexusmods.com/settings/api-keys"
 EXAMPLES = ("https://www.nexusmods.com/cyberpunk2077/mods/107\n"
@@ -24,6 +40,7 @@ EXAMPLES = ("https://www.nexusmods.com/cyberpunk2077/mods/107\n"
             "https://github.com/psiberx/cp2077-codeware")
 LEVEL = {"high": "Serious", "medium": "Warning", "info": "Info"}
 ACTIVE = ("queued", "running", "waiting", "needkey")
+CURRENT = "Current mod list"  # the pack picker item that launches the list as it is
 
 
 class Tip:
@@ -67,6 +84,7 @@ class App:
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.geometry(f"{self.px(1180)}x{self.px(760)}")
         root.minsize(self.px(900), self.px(560))
+        use_theme(self.store.settings["theme"])
         root.configure(bg=BG)
         icon = Path(__file__).with_name("icon.png")
         if icon.exists():
@@ -104,13 +122,13 @@ class App:
         s.configure("TNotebook.Tab", background=PANEL, foreground=DIM, padding=(16, 7), borderwidth=0)
         s.map("TNotebook.Tab", background=[("selected", PANEL2)], foreground=[("selected", ACCENT)])
         s.configure("TButton", background=PANEL2, foreground=FG, padding=(12, 6), borderwidth=0)
-        s.map("TButton", background=[("active", "#30364a"), ("disabled", PANEL)], foreground=[("disabled", DIM)])
-        s.configure("Big.TButton", background=ACCENT, foreground="#000", font=("Segoe UI Semibold", 10))
-        s.map("Big.TButton", background=[("active", "#fff35c")])
+        s.map("TButton", background=[("active", HOVER), ("disabled", PANEL)], foreground=[("disabled", DIM)])
+        s.configure("Big.TButton", background=ACCENT, foreground=INK, font=("Segoe UI Semibold", 10))
+        s.map("Big.TButton", background=[("active", HOT)])
         s.configure("Treeview", background=PANEL, fieldbackground=PANEL, foreground=FG, rowheight=self.px(26), borderwidth=0)
         s.configure("Treeview.Heading", background=PANEL2, foreground=ACCENT, borderwidth=0, padding=(6, 4))
         s.map("Treeview.Heading", background=[("active", PANEL2)])
-        s.map("Treeview", background=[("selected", "#3a3f12")], foreground=[("selected", FG)])
+        s.map("Treeview", background=[("selected", SEL)], foreground=[("selected", FG)])
         s.configure("TEntry", fieldbackground=PANEL, foreground=FG, insertcolor=FG, padding=5)
         s.configure("Vertical.TScrollbar", background=PANEL2, troughcolor=BG, arrowcolor=DIM, borderwidth=0)
         s.configure("Horizontal.TProgressbar", background=ACCENT, troughcolor=PANEL, borderwidth=0)
@@ -124,8 +142,8 @@ class App:
         s.configure("Card.TFrame", background=PANEL)
         s.configure("Card.TLabel", background=PANEL, foreground=FG)
         s.configure("CardDim.TLabel", background=PANEL, foreground=DIM)
-        s.configure("Banner.TFrame", background="#2b2610")
-        s.configure("Banner.TLabel", background="#2b2610", foreground=ACCENT)
+        s.configure("Banner.TFrame", background=BANNER)
+        s.configure("Banner.TLabel", background=BANNER, foreground=ACCENT)
 
     def _buttons(self, parent, spec):
         """spec: (label, command, tooltip). Labels starting with ▶ get the main colour."""
@@ -154,7 +172,7 @@ class App:
 
     def _text(self, parent, height, font=("Consolas", 10)):
         return tk.Text(parent, height=height, bg=PANEL, fg=FG, insertbackground=FG, relief="flat", wrap="word", font=font,
-                       padx=8, pady=6, highlightthickness=0, selectbackground="#3a3f12")
+                       padx=8, pady=6, highlightthickness=0, selectbackground=SEL)
 
     def _header(self):
         head = ttk.Frame(self.root, padding=(16, 12, 16, 0))
@@ -163,6 +181,11 @@ class App:
         b = ttk.Button(head, text="▶  Launch game", style="Big.TButton", command=self.launch)
         b.pack(side="right")
         Tip(b, "Copies your mods into the game, starts Cyberpunk 2077 and watches it for crashes.")
+        self.pack_pick = ttk.Combobox(head, state="readonly", width=30, values=[CURRENT, *self.store.packs])
+        self.pack_pick.set(self.store.pack if self.store.pack in self.store.packs else CURRENT)
+        self.pack_pick.pack(side="right", padx=(0, 8))
+        Tip(self.pack_pick, "The mod pack to launch. 'Current mod list' launches the mods as the Mods tab shows them.")
+        ttk.Label(head, text="Mod pack", style="Dim.TLabel").pack(side="right", padx=(0, 6))
         self.game_pill = ttk.Label(head, text="● Game not running", style="Dim.TLabel")
         self.game_pill.pack(side="right", padx=14)
         self.banner = ttk.Frame(self.root, style="Banner.TFrame", padding=(14, 8))
@@ -200,6 +223,15 @@ class App:
             ("Remove", self.remove, "Remove the selected mods from the game and from this app. Shortcut: Delete."),
             ("Open folder", self.open_folder, "Show the files of the selected mod."),
             ("Apply to game", lambda: self.redeploy(), "Copy the mods that are on into the game folder now.")]).pack(side="left")
+        row = ttk.Frame(f)
+        row.pack(fill="x", pady=(8, 0))
+        ttk.Label(row, text="Mod packs").pack(side="left", padx=(0, 8))
+        self._buttons(row, [
+            ("Save as pack…", self.save_pack, "Keep this list (which mods are on, and their order) as a mod pack to launch later."),
+            ("Use pack", self.use_pack, "Set this list to the pack picked next to 'Launch game': its mods on, in its order, the "
+                                        "rest off. Each Nexus collection you add is a pack too."),
+            ("Merge packs…", self.merge_packs, "Make one big pack from several packs."),
+            ("Delete pack", self.delete_pack, "Forget the pack picked next to 'Launch game'. Its mods stay installed.")]).pack(side="left")
         self.mods_box = ttk.Frame(f)
         self.mods_box.pack(fill="both", expand=True, pady=10)
         self.mods_tree_frame, self.mods = self._tree(self.mods_box, ("On", "Mod", "Version", "Type", "Source"),
@@ -211,7 +243,7 @@ class App:
         self.mods.bind("<Control-A>", self.select_all)  # Caps Lock on
         self.mods.bind("<Button-1>", self._mods_click, add="+")
         self.mods.bind("<Button-3>", self._mods_menu)
-        self.menu = tk.Menu(self.root, tearoff=0, bg=PANEL2, fg=FG, activebackground=ACCENT, activeforeground="#000", bd=0)
+        self.menu = tk.Menu(self.root, tearoff=0, bg=PANEL2, fg=FG, activebackground=ACCENT, activeforeground=INK, bd=0)
         for label, cmd in (("Turn on / off", self.toggle), ("Update", self.update), ("Open folder", self.open_folder),
                            ("Move up", lambda: self.move(-1)), ("Move down", lambda: self.move(1)), ("Remove", self.remove)):
             self.menu.add_command(label=label, command=cmd)
@@ -308,7 +340,9 @@ class App:
             ("Ask the local AI", self.ask_ai, "The AI on this PC reads your load order and the problems, then suggests fixes "
                                               "and mod moves. You see them before anything changes. Set it up in the AI helpers tab."),
             ("Find the bad mod for me", self.bisect_begin, "Turns half the mods off for each game start until the mod that crashes the game is found."),
-            ("Stop the search", self.bisect_cancel, "Stop the bad-mod search and turn your mods back on.")]).pack(fill="x", pady=8)
+            ("Stop the search", self.bisect_cancel, "Stop the bad-mod search and turn your mods back on."),
+            ("Save crash report", self.save_report, ("Save a text file about the last crash or freeze and your mods, to share with "
+                                                     "a mod author. Folder paths of this PC are hidden."))]).pack(fill="x", pady=8)
         hist = ttk.Frame(f)  # packed at the bottom first, so the problem list cannot squeeze it out
         hist.pack(side="bottom", fill="x")
         head = ttk.Frame(hist)
@@ -339,25 +373,28 @@ class App:
         wrap = self.px(1080)
         ttk.Label(f, text="Local AI (free, runs on this PC)", style="Section.TLabel").pack(anchor="w")
         ttk.Label(f, style="Dim.TLabel", wraplength=wrap, justify="left", text=(
-            "An open AI model runs on your PC with Ollama: free, no account, and offline once it is downloaded (about 3 GB). "
+            "An open AI model (Qwen3.5) comes with this app and runs on your PC: free, no account, no install, and offline. "
             "'Ask the local AI' in the Crash doctor tab lets it read your load order and the problems I found, pick fixes, and "
-            "find patches that must load after the mod they change. You see every change first, and you can undo it. It is a "
-            "general AI model that gets this app's modding rules; it was not trained only for Cyberpunk. A graphics card with "
-            "6 GB or more makes it fast; it also runs on the processor, more slowly.")).pack(anchor="w", pady=(2, 8))
-        row = ttk.Frame(f)
-        row.pack(fill="x")
-        ttk.Label(row, text="Model").pack(side="left")
-        self.ai_model = tk.StringVar(value=self.store.settings["ai_model"])
-        e = ttk.Entry(row, textvariable=self.ai_model, width=24)
-        e.pack(side="left", padx=8)
-        e.bind("<FocusOut>", lambda _: self.save_ai_model())
-        self._buttons(row, [
-            ("▶ Download local AI", self.setup_ai, "Installs Ollama if it is not installed, starts it and downloads the model. "
-                                                  "Any Ollama model name works, e.g. qwen3.5:9b for a better but slower AI."),
-            ("Ask the local AI", self.ask_ai, "Same as the button in the Crash doctor tab.")]).pack(side="left")
+            "find patches that must load after the mod they change. You see every change first, and you can undo it. It runs "
+            "only while this window is open and the game is not running: it stops when the game starts or the window closes. "
+            "A graphics card makes it fast; it also runs on the processor, more slowly.")).pack(anchor="w", pady=(2, 8))
+        self._buttons(f, [
+            ("▶ Check local AI", self.setup_ai, "Starts the local AI once to check it. When you run the app from its source "
+                                               "code, this first downloads the AI (about 1.3 GB)."),
+            ("Ask the local AI", self.ask_ai, "Same as the button in the Crash doctor tab.")]).pack(anchor="w")
         self.ai_info = ttk.Label(f, style="Dim.TLabel", wraplength=wrap, justify="left",
-                                 text="Click 'Download local AI' to set it up. When it is set up already, this only checks it.")
+                                 text="The local AI is ready to use." if llm.ready() else
+                                 "The local AI files are missing. Click 'Check local AI' to download them (about 1.3 GB).")
         self.ai_info.pack(anchor="w", pady=(8, 22))
+        ttk.Label(f, text="Tell the local AI about a bug", style="Section.TLabel").pack(anchor="w")
+        ttk.Label(f, style="Dim.TLabel", wraplength=wrap, justify="left", text=(
+            "Write what goes wrong in the game, for example: 'My modded car does not show up'. The local AI reads your mods "
+            "and the problems I found, tells you the most likely cause, and offers fixes. You see every change first.")
+                  ).pack(anchor="w", pady=(2, 6))
+        self.bug_text = self._text(f, 3, font=("Segoe UI", 10))
+        self.bug_text.pack(fill="x")
+        self._buttons(f, [("▶ Ask about this bug", self.ask_bug, "The local AI explains the bug and offers fixes.")]
+                      ).pack(anchor="w", pady=(6, 22))
         ttk.Label(f, text="Claude and other AI apps", style="Section.TLabel").pack(anchor="w")
         ttk.Label(f, style="Dim.TLabel", wraplength=wrap, justify="left", text=(
             "Give a mod link or a video link to Claude and ask it to set the mods up: it adds them here, sorts the load order "
@@ -415,8 +452,14 @@ class App:
                 ("include_optional", "Download optional files in collections")], start=9):
             v = self.flags[key] = tk.BooleanVar(value=st[key])
             ttk.Checkbutton(f, text=text, variable=v, command=self.save_settings).grid(row=row, column=0, columnspan=3, sticky="w", pady=3)
+        ttk.Label(f, text="Style").grid(row=12, column=0, sticky="w", pady=(10, 3))
+        self.theme_var = tk.StringVar(value=st["theme"])
+        pick = ttk.Frame(f)
+        pick.grid(row=12, column=1, columnspan=2, sticky="w", pady=(10, 3))
+        for name in THEMES:
+            ttk.Radiobutton(pick, text=name, value=name, variable=self.theme_var, command=self.set_theme).pack(side="left", padx=(0, 14))
         foot = ttk.Frame(f)
-        foot.grid(row=12, column=0, columnspan=3, sticky="we", pady=(22, 0))
+        foot.grid(row=13, column=0, columnspan=3, sticky="we", pady=(22, 0))
         ttk.Button(foot, text="Open data folder", command=lambda: os.startfile(self.store.root)).pack(side="right")
         ttk.Label(foot, style="Dim.TLabel", text=f"Mods, backups and settings are kept in {self.store.root}").pack(side="left", fill="x")
         self.refresh_settings()
@@ -444,6 +487,7 @@ class App:
         if self.ctl.stop.is_set():
             return
         self.ctl.stop.set()
+        llm.block()  # at once: a copy that still runs does not need the local AI
         self.say("Finishing the current copy into the game folder…")
         try:
             self.root.attributes("-disabled", True)  # no clicks while closing (the window still repaints)
@@ -454,6 +498,7 @@ class App:
     def _close_when_free(self):
         if self.store.lock.acquire(blocking=False):
             # Keep the lock until the process ends: no thread may start a copy or swap mod files now.
+            llm.block()  # the local AI runs only while the window is open
             self.root.destroy()
         else:
             self.root.after(200, self._close_when_free)
@@ -473,8 +518,80 @@ class App:
         busy = sum(j["state"] in ("queued", "running") for j in self.ctl.jobs)
         if busy and not messagebox.askyesno("Downloads running", f"{busy} download(s) are still running. Start the game anyway?"):
             return
-        self.ctl.bg(self.ctl.launch)  # copying mods can take a while; errors arrive as messages
-        self.say("Starting the game. I watch it for crashes.")
+        pack = self.picked_pack()
+        self.ctl.bg(self.ctl.launch, pack)  # copying mods can take a while; errors arrive as messages
+        self.say(f"Starting the game with the mod pack '{pack}'. I watch it for crashes." if pack else
+                 "Starting the game. I watch it for crashes.")
+
+    # ---------- mod packs ----------
+    def picked_pack(self):
+        name = self.pack_pick.get()
+        return name if name in self.store.packs else None
+
+    def refresh_packs(self):
+        self.pack_pick.configure(values=[CURRENT, *self.store.packs])
+        if self.pack_pick.get() not in (CURRENT, *self.store.packs):  # its pack was deleted
+            self.pack_pick.set(CURRENT)
+
+    def save_pack(self):
+        name = simpledialog.askstring("Save mod pack", "Name of the mod pack:", parent=self.root,
+                                      initialvalue=self.picked_pack() or self.store.pack)
+        if not name or not name.strip():
+            return
+        name = name.strip()
+        if name in self.store.packs and not messagebox.askyesno("Save mod pack", f"Replace the mod pack '{name}'?"):
+            return
+        self.ctl.save_pack(name)
+        self.refresh_packs()
+        self.pack_pick.set(name)
+        self.say(f"Saved the mod pack '{name}'. Pick it next to 'Launch game' to launch it.")
+
+    def use_pack(self):
+        pack = self.picked_pack()
+        if not pack:
+            return messagebox.showinfo("Mod packs", "Pick a mod pack next to 'Launch game' first.")
+        self.say(self.ctl.use_pack(pack))
+        return self.redeploy()
+
+    def delete_pack(self):
+        pack = self.picked_pack()
+        if pack and messagebox.askyesno("Mod packs", f"Forget the mod pack '{pack}'? Its mods stay installed."):
+            self.ctl.delete_pack(pack)
+            self.pack_pick.set(CURRENT)
+            self.refresh_packs()
+
+    def merge_packs(self):
+        names = list(self.store.packs)
+        if len(names) < 2:
+            return messagebox.showinfo("Merge mod packs", "Save or add two or more mod packs first. Each Nexus collection you add "
+                                                          "is a mod pack.")
+        win = self.merge_win = tk.Toplevel(self.root, bg=BG)
+        win.title("Merge mod packs")
+        ttk.Label(win, text="Pick the packs to merge. When two mods change the same file, the pack lower in this list wins. "
+                            "You can change that later in the Crash doctor tab.", wraplength=self.px(460)).pack(padx=14, pady=(12, 6))
+        box = tk.Listbox(win, selectmode="multiple", height=min(15, len(names)), bg=PANEL2, fg=FG, selectbackground=ACCENT,
+                         selectforeground=INK, highlightthickness=0, bd=0, exportselection=False)
+        for n in names:
+            box.insert("end", f"{n}  ({len(self.store.packs[n])} mods)")
+        box.pack(fill="both", expand=True, padx=14)
+        row = ttk.Frame(win, padding=(14, 10))
+        row.pack(fill="x")
+        ttk.Label(row, text="New pack").pack(side="left")
+        new = tk.StringVar(value="Merged pack")
+        ttk.Entry(row, textvariable=new, width=28).pack(side="left", padx=6)
+
+        def merge():
+            picked = [names[i] for i in box.curselection()]
+            try:
+                n = self.ctl.merge_packs(picked, new.get())
+            except ValueError as e:
+                return messagebox.showinfo("Merge mod packs", str(e), parent=win)
+            win.destroy()
+            self.refresh_packs()
+            self.pack_pick.set(new.get().strip())
+            return self.say(f"Made the mod pack '{new.get().strip()}' with {n} mods. Launch it, or press 'Use pack' to see it.")
+        ttk.Button(row, text="▶ Merge", style="Big.TButton", command=merge).pack(side="right")
+        self.merge_ok = merge  # for tests
 
     def _mods_click(self, e):
         if self.mods.identify_region(e.x, e.y) == "cell" and self.mods.identify_column(e.x) == "#1":
@@ -613,33 +730,32 @@ class App:
         if self.found.focus():
             webbrowser.open(self.found.focus())
 
-    def save_ai_model(self):
-        model = self.ai_model.get().strip() or DEFAULTS["ai_model"]
-        self.ai_model.set(model)
-        if self.store.settings.get("ai_model") != model:  # a save waits while a deploy holds the store
-            self.store.settings["ai_model"] = model
-            self.store.save()
-        return model
-
     def setup_ai(self):
-        model = self.save_ai_model()
-        if not ollama.exe() and not messagebox.askyesno("Local AI", (
-                "I install Ollama, the free program that runs AI models on your PC (MIT license), with Windows' winget "
-                f"installer, and accept its license for you. Then I download {model} (a few GB).\n\nGo on?")):
+        if not llm.ready() and not messagebox.askyesno("Local AI", (
+                "The local AI files are not next to this app. I download the llama.cpp engine (MIT license, 36 MB, from "
+                "GitHub) and the Qwen3.5 model (Apache 2.0 license, 1.3 GB, from this app's GitHub releases), and check both files.\n\nGo on?")):
             return
         self.ai_info.configure(text="Setting up the local AI…", foreground=DIM)
-        self.ctl.bg(self.ctl.setup_ai, model)
+        self.ctl.bg(self.ctl.setup_ai)
 
     def ask_ai(self):
-        self.save_ai_model()  # a click on a button does not take the focus from the model box, so save it here
         self.say("The local AI is reading your mods and problems… The first answer can take a minute.")
         self.ctl.bg(self.ctl.ask_ai)
+
+    def ask_bug(self):
+        text = self.bug_text.get("1.0", "end").strip()
+        if not text:
+            return messagebox.showinfo("Local AI", "First write what goes wrong in the game.")
+        self.say("The local AI is reading your bug report, mods and problems… The first answer can take a minute.")
+        self.ctl.bg(self.ctl.ask_ai, text)
 
     def show_ai(self, p):
         if "error" in p:
             self.say("The local AI could not help.")
             return messagebox.showerror("Local AI", p["error"])
         text = (p["summary"] or "The local AI gave no summary.")[:900]
+        if p.get("cause"):
+            text = f"Why it happens: {p['cause'][:600]}\n\n{text}"
         if p["order"]:
             text += f"\n\nLoad order: {p['moved']} mod(s) change place."
         if p["fixes"]:
@@ -731,6 +847,17 @@ class App:
             self.refresh_history()
             self.say("Fix reversed.")
 
+    def save_report(self):
+        path = filedialog.asksaveasfilename(title="Save crash report", defaultextension=".txt", filetypes=[("Text", "*.txt")],
+                                            initialfile=f"cp2077-crash-report-{time.strftime('%Y%m%d-%H%M')}.txt")
+        if not path:
+            return
+        try:
+            Path(path).write_text(self.ctl.crash_report(), encoding="utf-8")
+        except OSError as e:
+            return messagebox.showerror("Save crash report", f"Could not save the report: {e}")
+        self.say(f"Crash report saved: {path}")
+
     def bisect_begin(self):
         if messagebox.askyesno("Find the bad mod", "I will turn half of your mods off. Start the game and play until it crashes, "
                                                    "or quit normally if it does not. I repeat this until I find the bad mod.\n\nStart?"):
@@ -766,6 +893,31 @@ class App:
             self.redeploy()
         self.refresh_settings()
         self.refresh_mods()
+
+    def set_theme(self):
+        self.store.settings["theme"] = self.theme_var.get()
+        self.store.save()
+        use_theme(self.store.settings["theme"])
+        self._style()
+        self.root.configure(bg=BG)
+        self._recolor(self.root)
+
+    def _recolor(self, w):
+        """Plain Tk widgets keep the colours they were made with; ttk ones follow _style."""
+        for c in w.winfo_children():
+            if isinstance(c, tk.Text):
+                c.configure(bg=PANEL, fg=FG, insertbackground=FG, selectbackground=SEL)
+                c.tag_configure("ph", foreground=DIM)
+            elif isinstance(c, tk.Listbox):
+                c.configure(bg=PANEL2, fg=FG, selectbackground=ACCENT, selectforeground=INK)
+            elif isinstance(c, tk.Menu):
+                c.configure(bg=PANEL2, fg=FG, activebackground=ACCENT, activeforeground=INK)
+            elif isinstance(c, tk.Toplevel):
+                c.configure(bg=BG)
+            elif isinstance(c, ttk.Treeview):
+                for tag in ("off", "queued", "info"):
+                    c.tag_configure(tag, foreground=DIM)
+            self._recolor(c)
 
     def check_key(self):
         if self.key_var.get().strip() != self.store.settings["api_key"]:
@@ -835,6 +987,7 @@ class App:
         on = len(self.store.enabled())
         self.mods_info.configure(text=f"{len(self.store.mods)} mods, {on} on.   Lower in the list wins when two mods change the same file.   "
                                       "Right-click a mod for more.")
+        self.refresh_packs()
         self.refresh_tabs()
 
     def show_job(self, j):

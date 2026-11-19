@@ -6,10 +6,10 @@ import re
 import threading
 from pathlib import Path
 
-VERSION = "1.0.3"  # window title, MCP server and the Nexus Application-Version header
+VERSION = "1.1.0"  # window title, MCP server and the Nexus Application-Version header
 DATA = Path(os.environ.get("CP2077MM_DATA") or Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "CP2077ModManager")
 GAME_EXE = "bin/x64/Cyberpunk2077.exe"
-DEFAULTS = {"game_dir": "", "api_key": "", "virus_scan": True, "auto_fix": True, "include_optional": True, "ai_model": "qwen3.5:4b"}
+DEFAULTS = {"game_dir": "", "api_key": "", "virus_scan": True, "auto_fix": True, "include_optional": True, "theme": "Cyberpunk"}
 
 
 def kind_of(m):
@@ -44,12 +44,14 @@ class Store:
         # False only for a state file written by v1.0.0, until its first v1.0.1 deploy decides who owns modlist.txt
         self.modlist_tracked = d.get("modlist_tracked", not self.file.exists())
         self.doctor = d.get("doctor", {})      # last_launch, last_good, bisect, history, ignored
+        self.packs = d.get("packs", {})        # mod pack name -> [[mod id, on], ...], lowest priority first
+        self.pack = d.get("pack", "")          # the pack the mod list was last set to ("" = none)
 
     def save(self):
         with self.lock:
             tmp = self.file.with_suffix(".tmp")
             body = {"settings": self.settings, "mods": self.mods, "deployed": self.deployed, "deploy_game": self.deploy_game,
-                    "modlist_tracked": self.modlist_tracked, "doctor": self.doctor}
+                    "modlist_tracked": self.modlist_tracked, "doctor": self.doctor, "packs": self.packs, "pack": self.pack}
             tmp.write_text(json.dumps(body, indent=1), "utf-8")
             os.replace(tmp, self.file)
 
