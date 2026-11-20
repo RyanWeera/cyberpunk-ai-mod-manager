@@ -4,7 +4,7 @@ login. For every waiting file it opens the file's page, clicks "Slow download" a
 the site answers with, so no file needs a click. Nexus's terms disallow automating that click, so any failure
 falls back to the manual way: the manager opens the page and the user clicks.
 
-Standard library only. The browser is Edge (Chromium) with a hidden window, driven over its DevTools protocol:
+Standard library only. The browser is Brave, Edge or Chrome (all Chromium) with a hidden window, driven over its DevTools protocol:
 a tab is opened through /json/new, the page is read and clicked with Runtime.evaluate, and the nxm:// link is
 caught from the DevTools event stream (the site answers the click with a redirect whose Location is nxm://...).
 """
@@ -22,8 +22,11 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-# Full paths only (never shutil.which on Windows: it looks in the current folder first).
-BROWSERS = [("ProgramFiles(x86)", r"Microsoft\Edge\Application\msedge.exe"), ("ProgramFiles", r"Microsoft\Edge\Application\msedge.exe"),
+# Full paths only (never shutil.which on Windows: it looks in the current folder first). Brave comes first:
+# Edge is on every Windows PC, so a user who installed Brave chose it.
+BRAVE = r"BraveSoftware\Brave-Browser\Application\brave.exe"
+BROWSERS = [("ProgramFiles", BRAVE), ("ProgramFiles(x86)", BRAVE), ("LocalAppData", BRAVE),
+            ("ProgramFiles(x86)", r"Microsoft\Edge\Application\msedge.exe"), ("ProgramFiles", r"Microsoft\Edge\Application\msedge.exe"),
             ("LocalAppData", r"Microsoft\Edge\Application\msedge.exe"), ("ProgramFiles", r"Google\Chrome\Application\chrome.exe"),
             ("ProgramFiles(x86)", r"Google\Chrome\Application\chrome.exe"), ("LocalAppData", r"Google\Chrome\Application\chrome.exe")]
 FLAGS = ["--no-first-run", "--no-default-browser-check", "--disable-gpu", "--lang=en-US",
@@ -48,7 +51,7 @@ class NeedLogin(Exception):
 
 
 def find_browser():
-    """Path of Edge, or Chrome as a fallback, or "" when neither is installed."""
+    """Path of Brave, Edge or Chrome (the first one installed, in that order), or "" when none is."""
     for var, tail in BROWSERS:
         p = Path(os.environ.get(var, "")) / tail
         if p.exists():
@@ -240,7 +243,10 @@ class Browser:
     """One browser process on its own profile folder. `visible` is for the one-time Nexus login."""
 
     def __init__(self, profile, visible=False):
-        self.exe, self.profile, self.visible = find_browser(), Path(profile), visible
+        self.exe, self.visible = find_browser(), visible
+        stem = Path(self.exe).stem.lower()
+        # each browser gets its own profile folder: one browser cannot always read the login another one saved
+        self.profile = Path(profile) if stem in ("", "msedge") else Path(profile) / stem
         self.proc, self.port = None, 0
 
     def alive(self):
@@ -248,7 +254,7 @@ class Browser:
 
     def start(self, url="about:blank"):
         if not self.exe:
-            raise RuntimeError("no Edge or Chrome found on this PC")
+            raise RuntimeError("no Brave, Edge or Chrome found on this PC")
         self.profile.mkdir(parents=True, exist_ok=True)
         args = [self.exe] + ([] if self.visible else ["--headless=new"]) + FLAGS + [f"--user-data-dir={self.profile}", url]
         self.proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

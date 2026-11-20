@@ -195,6 +195,21 @@ class FakeClicker:
         pass
 
 
+class FindBrowser(unittest.TestCase):
+    def test_brave_first_with_its_own_profile(self):
+        tmp = Path(tempfile.mkdtemp())
+        for tail in (nexus_browser.BRAVE, r"Microsoft\Edge\Application\msedge.exe"):
+            (tmp / tail).parent.mkdir(parents=True, exist_ok=True)
+            (tmp / tail).write_bytes(b"")
+        env = {"ProgramFiles": str(tmp), "ProgramFiles(x86)": "", "LocalAppData": ""}
+        with mock.patch.dict(nexus_browser.os.environ, env):
+            self.assertEqual(nexus_browser.find_browser(), str(tmp / nexus_browser.BRAVE))
+            self.assertEqual(nexus_browser.Browser(tmp / "p").profile, tmp / "p" / "brave")
+            (tmp / nexus_browser.BRAVE).unlink()
+            self.assertTrue(nexus_browser.find_browser().endswith("msedge.exe"))
+            self.assertEqual(nexus_browser.Browser(tmp / "p").profile, tmp / "p")  # Edge keeps the old folder
+
+
 class Wiring(unittest.TestCase):
     """The controller hands waiting jobs to the clicker, not to the user's browser, when the setting is on."""
 
