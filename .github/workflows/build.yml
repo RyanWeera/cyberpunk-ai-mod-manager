@@ -1,0 +1,37 @@
+name: build exe
+
+# Builds the release exe (GNU toolchain and MinGW windres, as the README says) and keeps it as a workflow artifact.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exe:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: rust-app
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: |
+          rustup toolchain install stable-x86_64-pc-windows-gnu
+          rustup default stable-x86_64-pc-windows-gnu
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm --needed mingw-w64-x86_64-gcc
+          "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Build
+        run: |
+          cargo build --release --locked -p manager_ui
+          Copy-Item target\release\cp2077-ai-mod-manager.exe ..\CP2077.AI.Mod.Manager.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CP2077.AI.Mod.Manager
+          path: CP2077.AI.Mod.Manager.exe
+          if-no-files-found: error
