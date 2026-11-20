@@ -129,6 +129,22 @@ class ClickerFlow(unittest.TestCase):
             t.join(2)
         inner.assert_called_once()
 
+    def test_clicks_keep_a_gap_and_closing_ends_the_wait(self):
+        c = nexus_browser.Clicker(Path("p"), gap=0.4)
+        with mock.patch.object(c, "_click") as inner:
+            start = time.monotonic()
+            c.click(job())
+            c.click(job())
+            self.assertGreaterEqual(time.monotonic() - start, 0.4)  # the second click waited
+            self.assertEqual(inner.call_count, 2)
+            c.gap = 60
+            t = threading.Thread(target=c.click, args=(job(),))
+            t.start()
+            c.close()  # the window closes during the wait
+            t.join(2)
+            self.assertFalse(t.is_alive())
+            self.assertEqual(inner.call_count, 2)  # no click after close
+
     def test_a_link_for_another_file_falls_back(self):
         tab = FakeTab({nexus_browser.LOGIN_JS: 0, nexus_browser.CLICK_JS: 1, "nxm": "nxm://cyberpunk2077/mods/1/files/23?key=k"})
         logs, links, fails, c = self.run_click(tab)

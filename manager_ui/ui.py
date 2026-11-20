@@ -14,7 +14,7 @@ from pathlib import Path
 from tkinter import filedialog, font, messagebox, simpledialog, ttk
 
 from ai_link import tools
-from downloads import nexus
+from downloads import nexus, nexus_browser
 from downloads.fetch import FRAMEWORKS, thumbnails
 from local_ai import llm
 from manager_ui.controller import CORE, Controller
@@ -1802,7 +1802,8 @@ class App:
         if waiting:
             left = sum(j["state"] == "waiting" for j in jobs)
             self.dl_banner_text.configure(text=(
-                f"I click 'Slow download' on Nexus for you in a hidden browser. {left} file{'s' if left > 1 else ''} left." if auto else
+                f"I click 'Slow download' on Nexus for you in a hidden browser, one file every {nexus_browser.GAP} seconds. "
+                f"{left} file{'s' if left > 1 else ''} left." if auto else
                 f"Your browser shows the Nexus page for '{waiting['name']}'. Click 'Slow download' "
                 f"there and I do the rest. {left} click{'s' if left > 1 else ''} left."))
             self.dl_banner_btn.configure(text="Open page again", command=lambda: self.ctl.reopen(waiting))

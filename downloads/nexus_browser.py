@@ -40,6 +40,7 @@ CLICK_JS = ("(function(){var els=document.querySelectorAll('a,button,input[type=
             "if(/slow\\s*download/i.test(t)&&e.offsetParent){e.scrollIntoView({block:'center'});e.click();return 1;}}return 0;})()")
 POLL_JS = "(function(){return window.__nxm||''})()"
 READY_JS = "document.readyState"
+GAP = 30  # seconds from one automatic click to the next: a big mod pack must not send Nexus a burst of clicks
 
 
 class NeedLogin(Exception):
@@ -325,11 +326,12 @@ class Clicker:
     whether the job still wants a click (the user may have skipped it while the page was loading)."""
 
     def __init__(self, profile, log=lambda m: None, on_link=lambda link: None, on_fail=lambda j, why: None,
-                 waiting=lambda j: True, login_wait=300):
+                 waiting=lambda j: True, login_wait=300, gap=GAP):
         self.profile, self.log, self.on_link = Path(profile), log, on_link
         self.on_fail, self.waiting, self.login_wait = on_fail, waiting, login_wait
         self.browser = None
         self.busy = threading.Lock()  # one click at a time: two would share one browser profile
+        self.gap, self.last, self.closed = gap, None, threading.Event()
 
     def _hidden(self):
         if self.browser and self.browser.alive():
@@ -344,8 +346,11 @@ class Clicker:
         from downloads import nexus  # late import: this module stays usable without the rest of the app
         url = nexus.files_page(job["src"]["mod_id"], job["src"]["file_id"])
         with self.busy:
-            if self.waiting(job):  # the user may have skipped it while another click ran
+            if self.last is not None:
+                self.closed.wait(self.gap - (time.monotonic() - self.last))  # a negative wait returns at once
+            if self.waiting(job) and not self.closed.is_set():  # the user may have skipped it while waiting
                 self._click(job, url)
+                self.last = time.monotonic()
 
     def _click(self, job, url):
         try:
@@ -399,6 +404,7 @@ class Clicker:
             self.browser = None  # a fresh hidden browser picks up the saved login
 
     def close(self):
+        self.closed.set()  # also ends a wait for the next click
         if self.browser:
             self.browser.quit()
             self.browser = None

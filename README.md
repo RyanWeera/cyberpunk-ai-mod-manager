@@ -63,7 +63,7 @@ The yellow banner at the top of the app shows which set-up steps are still missi
 Nexus Mods gives a free account a download only after a person clicks **Slow download** on the website. With a free account, the app clicks it for you in a hidden Edge (or Chrome) browser:
 
 1. The first time, a browser window opens: log in to Nexus there once. The app keeps that login in its data folder.
-2. For each file, the app opens the file's page in the hidden browser, clicks **Slow download** and gets the download link.
+2. For each file, the app opens the file's page in the hidden browser, clicks **Slow download** and gets the download link. It clicks at most once every 30 seconds, so a big mod pack does not send Nexus many clicks at once.
 3. The app downloads, scans, installs and sets up the file, then goes to the next one.
 
 **Warning:** the Nexus terms do not allow a program to click **Slow download**. Nexus can ban accounts that do this, mainly for many downloads. To click yourself, turn off **Click 'Slow download' on Nexus for me** in **Settings**. Then the app opens the Nexus page of each file in your normal browser, one at a time, and you click **Slow download**. The app also does this when the hidden click fails (for example, no login, or the Nexus page changed).

@@ -317,10 +317,10 @@ Used by: ai_link/tools.py, downloads/nexus_browser.py, manager_ui/controller.py,
 - L217 def `files_page`: The page where a free user clicks "Slow download"; Nexus then hands the nxm:// link to this app.
 - L222 def `parse_link`: One pasted line -> a job description dict, None for blank/comment lines, ValueError when unknown.
 
-### `downloads/nexus_browser.py` (405 lines)
+### `downloads/nexus_browser.py` (411 lines)
 Hidden browser that clicks "Slow download" on Nexus for free accounts (owner decision 2026-11-20, Settings > "Click 'Slow download' for me").
 Uses: downloads/nexus.py
-Used by: manager_ui/controller.py
+Used by: manager_ui/controller.py, manager_ui/ui.py
 
 - L26 `BROWSERS` (constant)
 - L29 `FLAGS` (constant)
@@ -330,41 +330,42 @@ Used by: manager_ui/controller.py
 - L38 `CLICK_JS` (constant)
 - L41 `POLL_JS` (constant)
 - L42 `READY_JS` (constant)
-- L45 class `NeedLogin`: The Nexus page shows a login link, so the hidden click cannot work until the user logs in once.
-- L49 def `find_browser`: Path of Edge, or Chrome as a fallback, or "" when neither is installed.
-- L58 def `scan_nxm`: The first string in a JSON value that starts with nxm:// (DevTools events nest it anywhere), or "".
-- L69 def `ws_frame`: One masked client WebSocket frame (RFC 6455: clients must mask).
-- L81 def `ws_message`: ((opcode, fin, payload), rest) of one complete frame in buf, (None, buf) while it is incomplete.
-- L109 class `WS`: A small WebSocket client for the DevTools protocol: text both ways, pings answered.
-  - L112 `.__init__`
-  - L133 `.send`
-  - L136 `.recv`: One text message, or None when nothing arrived in `timeout` seconds.
-  - L163 `.close`
-- L171 class `Tab`: One page in the browser: DevTools calls and the events they produce.
-  - L174 `.__init__`
-  - L179 `.call`: Send one DevTools command and return its result; a protocol error raises RuntimeError.
-  - L196 `.pump`
-  - L201 `.run`: Evaluate js and return its value (returned by value, so JSON-safe results only).
-  - L208 `.wait_ready`
-  - L219 `.wait_nxm`: The nxm:// link the site answers the click with, from any DevTools event or the page hook, or None.
-- L238 class `Browser`: One browser process on its own profile folder.
-  - L241 `.__init__`
-  - L245 `.alive`
-  - L248 `.start`
-  - L267 `._http`
-  - L271 `.open`: A new Tab loading `url` (PUT /json/new; older builds only take GET).
-  - L283 `.pages`
-  - L286 `.wait_login`: True when an open page no longer shows a login link.
-  - L304 `.close`
-  - L311 `.quit`
-- L322 class `Clicker`: The Nexus click queue's hidden browser.
-  - L327 `.__init__`
-  - L334 `._hidden`
-  - L342 `.click`: Run on a worker thread: click for one waiting job.
-  - L350 `._click`
-  - L366 `._try`: Open the file's page hidden, click, and return the nxm:// link.
-  - L383 `._login`: One visible window on the same profile so the user can log in once; the login is kept.
-  - L401 `.close`
+- L43 `GAP` (constant)
+- L46 class `NeedLogin`: The Nexus page shows a login link, so the hidden click cannot work until the user logs in once.
+- L50 def `find_browser`: Path of Edge, or Chrome as a fallback, or "" when neither is installed.
+- L59 def `scan_nxm`: The first string in a JSON value that starts with nxm:// (DevTools events nest it anywhere), or "".
+- L70 def `ws_frame`: One masked client WebSocket frame (RFC 6455: clients must mask).
+- L82 def `ws_message`: ((opcode, fin, payload), rest) of one complete frame in buf, (None, buf) while it is incomplete.
+- L110 class `WS`: A small WebSocket client for the DevTools protocol: text both ways, pings answered.
+  - L113 `.__init__`
+  - L134 `.send`
+  - L137 `.recv`: One text message, or None when nothing arrived in `timeout` seconds.
+  - L164 `.close`
+- L172 class `Tab`: One page in the browser: DevTools calls and the events they produce.
+  - L175 `.__init__`
+  - L180 `.call`: Send one DevTools command and return its result; a protocol error raises RuntimeError.
+  - L197 `.pump`
+  - L202 `.run`: Evaluate js and return its value (returned by value, so JSON-safe results only).
+  - L209 `.wait_ready`
+  - L220 `.wait_nxm`: The nxm:// link the site answers the click with, from any DevTools event or the page hook, or None.
+- L239 class `Browser`: One browser process on its own profile folder.
+  - L242 `.__init__`
+  - L246 `.alive`
+  - L249 `.start`
+  - L268 `._http`
+  - L272 `.open`: A new Tab loading `url` (PUT /json/new; older builds only take GET).
+  - L284 `.pages`
+  - L287 `.wait_login`: True when an open page no longer shows a login link.
+  - L305 `.close`
+  - L312 `.quit`
+- L323 class `Clicker`: The Nexus click queue's hidden browser.
+  - L328 `.__init__`
+  - L336 `._hidden`
+  - L344 `.click`: Run on a worker thread: click for one waiting job.
+  - L355 `._click`
+  - L371 `._try`: Open the file's page hidden, click, and return the nxm:// link.
+  - L388 `._login`: One visible window on the same profile so the user can log in once; the login is kept.
+  - L406 `.close`
 
 ### `installer/deploy.py` (114 lines)
 Copy enabled mods from staging into the game folder.
@@ -489,9 +490,9 @@ Used by: manager_ui/ui.py
   - L863 `.bisect_cancel`
   - L870 `._bisect_result`
 
-### `manager_ui/ui.py` (1983 lines)
+### `manager_ui/ui.py` (1984 lines)
 The window.
-Uses: ai_link/tools.py, downloads/fetch.py, downloads/nexus.py, local_ai/llm.py, manager_ui/controller.py, shared/store.py
+Uses: ai_link/tools.py, downloads/fetch.py, downloads/nexus.py, downloads/nexus_browser.py, local_ai/llm.py, manager_ui/controller.py, shared/store.py
 Used by: app.py
 
 - L23 `THEMES` (constant)
@@ -622,15 +623,15 @@ Used by: app.py
   - L1740 `.refresh_mods`
   - L1773 `.show_job`
   - L1783 `.refresh_progress`
-  - L1819 `.refresh_tabs`
-  - L1831 `.refresh_history`
-  - L1837 `.refresh_bisect`
-  - L1846 `.show_problems`
-  - L1866 `.log_line`
-  - L1873 `._drain`
-  - L1922 `._serve`: Second app instances (started by nxm:// links) connect to the named pipe here.
-  - L1934 `._take`: Both sides prove they know the token; only then is the nxm link (or "show") read.
-- L1974 def `run`
+  - L1820 `.refresh_tabs`
+  - L1832 `.refresh_history`
+  - L1838 `.refresh_bisect`
+  - L1847 `.show_problems`
+  - L1867 `.log_line`
+  - L1874 `._drain`
+  - L1923 `._serve`: Second app instances (started by nxm:// links) connect to the named pipe here.
+  - L1935 `._take`: Both sides prove they know the token; only then is the nxm link (or "show") read.
+- L1975 def `run`
 
 ### `shared/store.py` (100 lines)
 App data folder, settings and the installed-mod list, kept in one JSON file.
@@ -699,7 +700,7 @@ Uses: app.py, manager_ui/ui.py
 - L16 `LINK` (constant)
 - L19 class `StartUp`
 
-### `tests/test_browser.py` (252 lines)
+### `tests/test_browser.py` (268 lines)
 The hidden-browser auto-clicker: WebSocket framing, the nxm:// capture and the Clicker flow, plus the controller wiring (a waiting job goes to the ...
 Uses: downloads/nexus_browser.py, manager_ui/controller.py, shared/store.py, tests/helpers.py
 
@@ -710,8 +711,8 @@ Uses: downloads/nexus_browser.py, manager_ui/controller.py, shared/store.py, tes
 - L75 class `FakeBrowser`
 - L93 def `job`
 - L97 class `ClickerFlow`
-- L169 class `FakeClicker`: Stands in for the real Clicker in the controller wiring test: records the jobs it is asked to click.
-- L182 class `Wiring`: The controller hands waiting jobs to the clicker, not to the user's browser, when the setting is on.
+- L185 class `FakeClicker`: Stands in for the real Clicker in the controller wiring test: records the jobs it is asked to click.
+- L198 class `Wiring`: The controller hands waiting jobs to the clicker, not to the user's browser, when the setting is on.
 
 ### `tests/test_code_map.py` (28 lines)
 tools/code_map.py: the generated index of CODE_MAP.md.
