@@ -6,18 +6,18 @@ A Windows mod manager for Cyberpunk 2077 that sets your mods up for you and fixe
   <a href="https://github.com/RyanWeera/cyberpunk-ai-mod-manager/releases/download/v2.0.0-manual/CP2077.AI.Mod.Manager.exe"><img src="https://img.shields.io/badge/Download_for_Windows-.exe-fcee0a?style=for-the-badge&logo=windows&logoColor=black&labelColor=fcee0a&color=0e1016" alt="Download for Windows"></a>
 </p>
 <p align="center">
-  <a href="https://github.com/RyanWeera/cyberpunk-ai-mod-manager/releases/latest"><img src="https://img.shields.io/github/v/release/RyanWeera/cyberpunk-ai-mod-manager?label=latest" alt="Latest version"></a>
+  <a href="https://github.com/RyanWeera/cyberpunk-ai-mod-manager/releases/tag/v2.0.0-manual"><img src="https://img.shields.io/badge/version-2.0.0_manual_click-fcee0a" alt="Version 2.0.0 manual click"></a>
   <img src="https://img.shields.io/github/downloads/RyanWeera/cyberpunk-ai-mod-manager/total" alt="Downloads">
   <img src="https://img.shields.io/github/license/RyanWeera/cyberpunk-ai-mod-manager" alt="License: MIT">
 </p>
 
-**One file. No installer. No Python.** Windows 11 (Windows 10 works for most mods). The button always gives you the newest version.
+**One file. No installer. No Python.** Windows 11 (Windows 10 works for most mods). The button gives you the manual-click version; its **Update** button keeps it up to date.
 
 **New in 2.0:** the whole app is rebuilt in Rust, with a new window in the Cyberpunk, Arasaka and Militech styles.
 It keeps every feature, your mods and your settings. This is the manual-click version: with a free Nexus
 account, you click **Slow download** on each file's Nexus page, and the app does the rest. The app always adds
-the Advanced Crash Reporter mod, so a crash report names the mod that caused it. Version 1.x users get 2.0 with the
-**Update** button in the Settings tab.
+the Advanced Crash Reporter mod, so a crash report names the mod that caused it. The **Update** button of version 1.x installs the
+automatic-click build, so 1.x users download this version with the button above instead.
 
 ![Mods tab](docs/screenshot.png)
 
@@ -84,7 +84,7 @@ If you click a "Mod Manager Download" button on Nexus yourself (not on a page th
 
 - **Every version:** the [Releases](../../releases) page.
 - **Check the file (optional):** each release lists the zip's SHA-256. In PowerShell, run `Get-FileHash .\CP2077.AI.Mod.Manager.zip` and compare. Unpack the zip to a folder of its own and start the exe in it.
-- **Update:** click **Update** in the Settings tab (from v1.2.0 on). Or close the app, download the newest zip and unpack it over the old folder. Your mods and settings stay. If the new exe is in a different folder or has a different name, click **Fix it: use this app** in the Settings tab, and copy the AI app setup again (**AI helpers** tab). The version is shown in the title bar.
+- **Update:** click **Update** in the Settings tab (from v1.2.0 on). Or close the app and replace the exe with the newest manual-click exe from the [Releases](../../releases) page (its tag ends in `-manual`). Your mods and settings stay. If the new exe is in a different folder or has a different name, click **Fix it: use this app** in the Settings tab, and copy the AI app setup again (**AI helpers** tab). The version is shown in the title bar.
 - **Remove:**
   1. In the **Mods** tab, clear the **Search** box, click any mod, press **Ctrl+A**, then click **Turn on / off** until every row shows ○. This takes the mods' files out of the game folder and puts back the game files (and your own `modlist.txt`) that they replaced.
   2. Wait until the status bar says the mods are set up in the game folder, then close the app.

@@ -672,7 +672,7 @@ impl Window {
             ui.label(RichText::new("How downloads work").color(t.fg).strong());
             for line in [
                 "•  Frameworks (RED4ext, CET, redscript, ArchiveXL, TweakXL, Codeware, Input Loader, Mod Settings) come from GitHub: no account, no clicks.",
-                "•  Nexus with a free account: Nexus gives a file only after a click on 'Slow download'. I click it for you in a hidden browser after you log in to Nexus once (Settings can turn this off). When that fails, I open the file's page in your browser: click 'Slow download' there and I do the rest.",
+                "•  Nexus with a free account: Nexus gives a file only after a click on 'Slow download'. I open each file's page in your browser, one at a time: click 'Slow download' there and I do the rest.",
                 "•  Nexus Premium: no clicks at all.  •  Every download is virus-scanned first (you can turn that off in Settings).",
             ] {
                 dim(ui, t, line);

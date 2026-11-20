@@ -77,6 +77,15 @@ fn test_only_a_newer_release_counts() {
         let got = fetch::app_latest().unwrap();
         assert_eq!(got, want.map(|url| json!({"tag": tag, "url": url})), "{tag}");
     }
+    let (a, b) = (format!("v{}.{}.0-manual", v[0], v[1] + 9), format!("v{}.{}.0-manual", v[0], v[1] + 11));
+    let mut pre = rel("v99.0.0-manual", &exe("v99.0.0-manual"));
+    pre["prerelease"] = json!(true);
+    let answer = json!([rel(&a, &exe(&a)), pre, rel(&b, &exe(&b))]); // the highest version, not the first in the list
+    let _m = mock(move |_| answer.clone());
+    assert_eq!(fetch::app_latest().unwrap(), Some(json!({"tag": b, "url": exe(&b)})));
+    let answer = json!([rel("v99.0.0", &exe("v99.0.0"))]);
+    let _m = mock(move |_| answer.clone());
+    assert_eq!(fetch::app_latest().unwrap(), None); // no manual-click release at all
     let answer = json!([rel("v99.0.0-manual", "https://evil.example/a.exe")]);
     let _m = mock(move |_| answer.clone());
     assert!(fetch::app_latest().is_err()); // an exe from anywhere else is not used

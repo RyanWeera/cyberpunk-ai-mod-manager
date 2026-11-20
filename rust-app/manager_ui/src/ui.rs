@@ -540,7 +540,7 @@ impl Window {
     }
 
     pub fn title(&self) -> String {
-        format!("Cyberpunk 2077 AI Mod Manager {VERSION}")
+        format!("Cyberpunk 2077 AI Mod Manager {VERSION} (manual click)")
     }
 
     pub fn theme(&self) -> &'static Theme {
@@ -1721,7 +1721,7 @@ impl Window {
                 "virus_scan" => f.virus_scan = on,
                 "auto_fix" => f.auto_fix = on,
                 "include_optional" => f.include_optional = on,
-                _ => f.auto_click = on,
+                _ => {} // manual-click version: nothing turns the automatic click on
             }
             let _ = st.save();
         }

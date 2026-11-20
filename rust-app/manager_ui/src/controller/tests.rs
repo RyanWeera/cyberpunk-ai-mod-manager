@@ -713,7 +713,7 @@ fn update_app_swaps_in_the_newest_release_exe() {
     // test_update_app_swaps_in_the_newest_release_exe
     let fx = Fx::new();
     let own = format!("https://github.com/{}/releases/download/v9.0.0/a.exe", fetch::APP_REPO);
-    let latest = format!("https://api.github.com/repos/{}/releases", fetch::APP_REPO);
+    let latest = format!("https://api.github.com/repos/{}/releases?per_page=100", fetch::APP_REPO);
     let release = |tag: &'static str| {
         let (own, latest) = (own.clone(), latest.clone());
         move |req: &Request| {
