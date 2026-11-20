@@ -280,6 +280,22 @@ class Pipeline(unittest.TestCase):
                          [{"type": "nexus", "mod_id": 6, "file_id": 60, "name": "Lights"},
                           {"type": "nexus", "mod_id": 7, "file_id": 70, "name": "Rain"}])
 
+    def test_complete_pack_uses_the_pack_when_its_downloads_end(self):
+        c = self.controller()
+        self.store.mods = [mod("a", []), mod("nexus-5-50", []), mod("b", [])]
+        self.store.packs["P"] = [["nexus-5-50", True], ["nexus-6-60", True], ["b", True]]
+        job = {"name": "Lights", "state": "running", "src": {"type": "nexus", "mod_id": 6, "file_id": 60}}
+        c.jobs.append(job)
+        with mock.patch.object(c, "bg", lambda fn, *a: fn(*a)), mock.patch.object(c, "_add"),                 mock.patch.object(c, "redeploy"):
+            c.complete_pack("P")
+            self.assertEqual(c.finish_pack, "P")  # a download still runs: the pack waits
+            self.assertTrue(self.store.mods[0]["enabled"])
+            job["state"] = "done"
+            c._after_job()
+        self.assertIsNone(c.finish_pack)
+        self.assertEqual([(m["id"], m["enabled"]) for m in self.store.mods], [("a", False), ("nexus-5-50", True), ("b", True)])
+        self.assertEqual(self.store.pack, "P")
+
     def test_update_app_swaps_in_the_newest_release_exe(self):
         c = self.controller()
         new = self.tmp / "new.exe"

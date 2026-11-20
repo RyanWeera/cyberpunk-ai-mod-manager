@@ -42,6 +42,7 @@ class Controller:
         self.store, self.notify = store, notify
         self.jobs, self.lock, self.work, self.ids = [], threading.RLock(), queue.Queue(), itertools.count(1)
         self.premium, self.clicking, self.stop = False, None, threading.Event()
+        self.finish_pack = None  # the pack that Complete installation uses once its downloads end
         # Free accounts only: a hidden browser clicks 'Slow download' so no file needs the user (owner decision 2026-11-20;
         # Nexus's terms disallow the automation, so every failure falls back to the manual click).
         self.clicker = nexus_browser.Clicker(
@@ -284,6 +285,8 @@ class Controller:
             j["state"] = "failed"
         self._set(j, "Skipped")
         self._next_click()
+        if self._finish_pack() and self.store.game():
+            self.redeploy()
         return True
 
     def retry(self, j):
@@ -411,6 +414,7 @@ class Controller:
         with self.lock:
             busy = any(j["state"] in ("queued", "running") for j in self.jobs)
         self._next_click()  # open the next Nexus page before the slower deploy
+        self._finish_pack()  # before the deploy below, so the game gets the pack
         if not busy and self.store.game():
             self.redeploy(sync=True, quiet=True)
 
@@ -503,8 +507,24 @@ class Controller:
                     self._add(link)
                 except Exception as e:  # noqa: BLE001 - one bad mod must not stop the others
                     self.notify("log", f"{link['name'] or link['mod_id']}: {e}")
+            with self.lock:  # set only now: a fast first download must not use the pack before the rest is queued
+                self.finish_pack = name
+            if self._finish_pack() and self.store.game():
+                self.redeploy()
         self.bg(run)
         return len(links)
+
+    def _finish_pack(self):
+        """After Complete installation: once none of the downloads is left (done, failed or skipped), use the pack:
+        its mods on, in its order, the rest off. True when it did."""
+        with self.lock:
+            name = self.finish_pack
+            if not name or any(j["state"] in ("queued", "running", "waiting", "needkey") for j in self.jobs):
+                return False
+            self.finish_pack = None
+        if name in self.store.packs:  # the user may have deleted it meanwhile
+            self.use_pack(name)
+        return True
 
     # ---------- app update ----------
     def update_app(self, rel=None):

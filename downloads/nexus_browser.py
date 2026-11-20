@@ -40,7 +40,7 @@ CLICK_JS = ("(function(){var els=document.querySelectorAll('a,button,input[type=
             "if(/slow\\s*download/i.test(t)&&e.offsetParent){e.scrollIntoView({block:'center'});e.click();return 1;}}return 0;})()")
 POLL_JS = "(function(){return window.__nxm||''})()"
 READY_JS = "document.readyState"
-GAP = 30  # seconds from one automatic click to the next: a big mod pack must not send Nexus a burst of clicks
+GAP = 3  # seconds from one automatic click to the next: a big mod pack must not send Nexus a burst of clicks
 
 
 class NeedLogin(Exception):

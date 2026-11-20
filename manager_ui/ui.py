@@ -1178,7 +1178,8 @@ class App:
         n = self.ctl.complete_pack(pack)
         if not n:
             return self.say(f"I cannot download the missing mods of '{pack}': they did not come from Nexus.")
-        self.say(f"Installing {n} mod(s) of '{pack}'. Follow them in the Downloads tab.")
+        self.say(f"Installing {n} mod(s) of '{pack}'. When they are done, I turn the pack on in the game. "
+                 "Follow them in the Downloads tab.")
         self.tabs.select(self.tab["Downloads"])
 
     def delete_pack(self, pack=None):
@@ -1802,7 +1803,7 @@ class App:
         if waiting:
             left = sum(j["state"] == "waiting" for j in jobs)
             self.dl_banner_text.configure(text=(
-                f"I click 'Slow download' on Nexus for you in a hidden browser, one file every {nexus_browser.GAP} seconds. "
+                f"I click 'Slow download' on Nexus for you in a hidden browser, with a {nexus_browser.GAP}-second pause between files. "
                 f"{left} file{'s' if left > 1 else ''} left." if auto else
                 f"Your browser shows the Nexus page for '{waiting['name']}'. Click 'Slow download' "
                 f"there and I do the rest. {left} click{'s' if left > 1 else ''} left."))
