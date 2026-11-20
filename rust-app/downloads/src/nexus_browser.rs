@@ -40,7 +40,21 @@ pub const FLAGS: [&str; 6] = [
     "--window-size=1200,900",
 ];
 pub const GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-pub const LOGIN_JS: &str = "(function(){return document.querySelector('a[href*=\"users/login\"]')?1:0})()";
+/// 1 when Nexus shows the page logged out (its download popup says so, or a sign-in link is on the page), 0 when the
+/// popup says logged in, 2 when neither shows within 10 seconds (the page is still loading, or it is no file page).
+pub const LOGIN_JS: &str = concat!(
+    "(async function(){for(var n=0;n<40;n++){",
+    "if(document.querySelector('mod-download-modal[user-is-logged-in=\"false\"],a[href*=\"users/login\"],a[href*=\"/auth/sign_in\"]'))return 1;",
+    "if(document.querySelector('mod-download-modal[user-is-logged-in=\"true\"]'))return 0;",
+    "await new Promise(function(r){setTimeout(r,250);});}return 2;})()"
+);
+/// For the login window: 1 when a fully loaded nexusmods.com page (not Cloudflare's check, not the sign-in site)
+/// shows no logged-out sign. After the login Nexus can show any page, and not every page has the download popup.
+pub const LOGGED_IN_JS: &str = concat!(
+    "(function(){var h=location.hostname;if(document.readyState!=='complete'||/^just a moment/i.test(document.title)",
+    "||!/(^|\\.)nexusmods\\.com$/.test(h)||h==='users.nexusmods.com')return 0;",
+    "return document.querySelector('mod-download-modal[user-is-logged-in=\"false\"],a[href*=\"users/login\"],a[href*=\"/auth/sign_in\"]')?0:1;})()"
+);
 pub const HOOK_JS: &str = concat!(
     "(function(){if(window.__nxmHook)return 1;window.__nxmHook=1;window.__nxm='';var re=/^nxm:/i;",
     "var cap=function(u){if(u&&re.test(u)&&!window.__nxm)window.__nxm=u;};var o=window.open;",
@@ -62,7 +76,9 @@ pub const CLICK_JS: &str = concat!(
 );
 pub const POLL_JS: &str = "(function(){return window.__nxm||''})()";
 /// A new tab is a "complete" about:blank before it starts to load the page, so that does not count.
-pub const READY_JS: &str = "location.href!=='about:blank'&&document.readyState";
+/// "check" while Cloudflare's "Just a moment..." page runs (it clears by itself in a normal browser window).
+pub const READY_JS: &str =
+    "location.href!=='about:blank'&&(/^just a moment/i.test(document.title)?'check':document.readyState)";
 /// From one automatic click to the next: a big mod pack must not send Nexus a burst of clicks.
 pub const GAP: Duration = Duration::from_secs(3);
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -375,14 +391,17 @@ impl Tab {
 
     pub fn wait_ready_for(&mut self, seconds: u64) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(seconds);
+        let mut check = false;
         while Instant::now() < deadline {
             // a script error means the context reset while the page loads: keep waiting
-            if self.run_js(READY_JS).is_ok_and(|v| v == "complete") {
-                return Ok(());
+            match self.run_js(READY_JS) {
+                Ok(v) if v == "complete" => return Ok(()),
+                Ok(v) => check = v == "check",
+                Err(_) => {}
             }
             self.pump(Duration::from_millis(500))?;
         }
-        Err("the Nexus page did not finish loading".into())
+        Err(if check { "Nexus showed a Cloudflare check that did not clear" } else { "the Nexus page did not finish loading" }.into())
     }
 
     /// The nxm:// link the site answers the click with, from any DevTools event or the page hook, or None.
@@ -455,7 +474,8 @@ impl Browser {
         let _ = std::fs::remove_file(&port_file); // a crashed browser leaves its old port behind
         let mut cmd = Command::new(exe);
         if !self.visible {
-            cmd.arg("--headless=new");
+            // a normal window parked off-screen, not headless: Cloudflare stops a headless browser before Nexus loads
+            cmd.arg("--window-position=-32000,-32000");
         }
         cmd.args(FLAGS).arg(format!("--user-data-dir={}", self.profile.display())).arg(url);
         cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).creation_flags(CREATE_NO_WINDOW);
@@ -528,7 +548,7 @@ impl Driver for Browser {
                     tab = Some(Tab::new(self.port, p)?);
                 }
                 Ok(match tab.as_mut() {
-                    Some(t) => t.run_js(LOGIN_JS)?.as_f64() == Some(0.0),
+                    Some(t) => t.run_js(LOGGED_IN_JS)? == 1,
                     None => false,
                 })
             })();
@@ -686,7 +706,8 @@ impl Clicker {
         };
         let r = (|| -> Result<String, TryError> {
             tab.wait_ready()?;
-            if truthy(&tab.run(LOGIN_JS)?) {
+            // 2 (login state not known) still tries the click: a failed click falls back to the manual one
+            if tab.run(LOGIN_JS)? == 1 {
                 return Err(TryError::NeedLogin);
             }
             tab.run(HOOK_JS)?;
