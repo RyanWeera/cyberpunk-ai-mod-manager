@@ -66,7 +66,7 @@ The yellow banner at the top of the app shows which set-up steps are still missi
 
 ## Nexus Mods and free accounts
 
-Nexus Mods gives a free account a download only after a person clicks **Slow download** on the website. With a free account, the app clicks it for you in a hidden Brave, Edge or Chrome browser (Brave when it is installed):
+Nexus Mods gives a free account a download only after a person clicks **Slow download** on the website. With a free account, the app clicks it for you in a hidden browser that runs in the background, with no taskbar button. It uses your default browser when that is Brave, Edge or Chrome, else Brave, Edge or Chrome in that order:
 
 1. The first time, a browser window opens: log in to Nexus there once. The app keeps that login in its data folder.
 2. For each file, the app opens the file's page in the hidden browser, clicks **Slow download** and gets the download link. It waits 3 seconds between clicks, so a big mod pack does not send Nexus all its clicks at once.

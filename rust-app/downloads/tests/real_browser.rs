@@ -4,6 +4,26 @@ use downloads::nexus_browser::{Browser, CLICK_JS, Driver, HOOK_JS, LOGIN_JS, fin
 use std::io::{Read, Write};
 use std::net::TcpListener;
 
+/// Visible windows of process `pid` that the taskbar shows (not tool windows).
+fn taskbar_windows(pid: u32) -> usize {
+    let out = std::process::Command::new(shared::sys32().join("WindowsPowerShell/v1.0/powershell.exe"))
+        .args(["-NoProfile", "-NonInteractive", "-Command", TASKBAR_PS])
+        .env("CP_PID", pid.to_string())
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().parse().unwrap()
+}
+const TASKBAR_PS: &str = concat!(
+    "Add-Type -Name W -Namespace U -MemberDefinition '",
+    "[DllImport(\"user32.dll\")] public static extern bool EnumWindows(EnumProc f, IntPtr l);",
+    "public delegate bool EnumProc(IntPtr h, IntPtr l);",
+    "[DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);",
+    "[DllImport(\"user32.dll\")] public static extern bool IsWindowVisible(IntPtr h);",
+    "[DllImport(\"user32.dll\")] public static extern IntPtr GetWindowLongPtrW(IntPtr h, int i);';",
+    "$n=0;$want=[uint32]$env:CP_PID;[U.W]::EnumWindows({param($h,$l)$p=0;[void][U.W]::GetWindowThreadProcessId($h,[ref]$p);",
+    "if($p -eq $want -and [U.W]::IsWindowVisible($h) -and ([int64][U.W]::GetWindowLongPtrW($h,-20) -band 0x80) -eq 0){$script:n++};$true},[IntPtr]::Zero)|Out-Null;$n"
+);
+
 const LINK: &str = "nxm://cyberpunk2077/mods/1/files/2?key=abc&expires=1&user_id=1";
 
 /// Serve `page` at / (and a 302 to LINK at /go), click Slow download in the hidden browser, return the link.
@@ -30,6 +50,8 @@ fn click_on(page: &'static str) -> Option<String> {
         b.start("about:blank").map_err(|e| format!("start: {e}"))?;
         let mut t = b.open_tab(&url).map_err(|e| format!("open: {e}"))?;
         t.wait_ready_for(30).map_err(|e| format!("ready: {e}"))?;
+        let pid = b.pid().expect("browser runs");
+        assert!(taskbar_windows(pid) == 0, "the hidden browser shows a window on the taskbar");
         assert_ne!(t.run_js(LOGIN_JS)?, 1, "a page with no sign-in link was taken as logged out");
         assert_eq!(t.run_js(HOOK_JS)?, 1);
         assert_eq!(t.run_js(CLICK_JS)?, 1, "the Slow download button was not clicked");

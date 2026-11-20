@@ -156,7 +156,7 @@ dependencies = [
 
 [[package]]
 name = "ai_link"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "downloads",
  "serde_json",
@@ -783,7 +783,7 @@ dependencies = [
 
 [[package]]
 name = "crash_doctor"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "regex",
  "serde_json",
@@ -908,7 +908,7 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
 name = "downloads"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "image",
  "regex",
@@ -1862,7 +1862,7 @@ dependencies = [
 
 [[package]]
 name = "installer"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "regex",
  "roxmltree 0.21.2",
@@ -2072,7 +2072,7 @@ checksum = "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70"
 
 [[package]]
 name = "local_ai"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "downloads",
  "serde_json",
@@ -2100,7 +2100,7 @@ checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "manager_ui"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "ai_link",
  "crash_doctor",
@@ -3488,7 +3488,7 @@ dependencies = [
 
 [[package]]
 name = "shared"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "indexmap",
  "regex",
@@ -3765,7 +3765,7 @@ dependencies = [
 
 [[package]]
 name = "testkit"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "serde_json",
  "shared",
@@ -4195,7 +4195,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "video_finder"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "downloads",
  "regex",
@@ -4208,7 +4208,7 @@ dependencies = [
 
 [[package]]
 name = "virus_scan"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "tempfile",
 ]

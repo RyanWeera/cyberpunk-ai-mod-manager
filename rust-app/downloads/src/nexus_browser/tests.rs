@@ -75,6 +75,15 @@ fn test_recv_reads_the_socket() {
     assert!(ws.recv(Duration::from_secs(1)).is_err());
 }
 
+#[test]
+fn test_default_browser_prog_ids() {
+    assert_eq!(browser_of("BraveHTML"), Some("brave"));
+    assert_eq!(browser_of("MSEdgeHTM"), Some("msedge"));
+    assert_eq!(browser_of("ChromeHTML.ABC123"), Some("chrome"));
+    assert_eq!(browser_of("FirefoxURL-308046B0AF4A39CB"), None);
+    assert!(BROWSERS.iter().any(|(_, t)| t.ends_with(r"\brave.exe")), "find_browser matches a default browser by its file name");
+}
+
 // test_browser.py ScanNxm.test_finds_it_anywhere
 #[test]
 fn test_finds_it_anywhere() {

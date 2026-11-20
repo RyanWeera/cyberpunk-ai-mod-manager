@@ -48,12 +48,14 @@ pub const LOGIN_JS: &str = concat!(
     "if(document.querySelector('mod-download-modal[user-is-logged-in=\"true\"]'))return 0;",
     "await new Promise(function(r){setTimeout(r,250);});}return 2;})()"
 );
-/// For the login window: 1 when a fully loaded nexusmods.com page (not Cloudflare's check, not the sign-in site)
-/// shows no logged-out sign. After the login Nexus can show any page, and not every page has the download popup.
+/// For the login window: 1 when a nexusmods.com page (not Cloudflare's check, not the sign-in site) shows no
+/// logged-out sign. After the login Nexus can show any page, and not every page has the download popup.
+/// Before "complete" only the popup's logged-in flag counts: a script can still add the sign-in link.
 pub const LOGGED_IN_JS: &str = concat!(
-    "(function(){var h=location.hostname;if(document.readyState!=='complete'||/^just a moment/i.test(document.title)",
+    "(function(){var h=location.hostname,s=document.readyState;if(s==='loading'||/^just a moment/i.test(document.title)",
     "||!/(^|\\.)nexusmods\\.com$/.test(h)||h==='users.nexusmods.com')return 0;",
-    "return document.querySelector('mod-download-modal[user-is-logged-in=\"false\"],a[href*=\"users/login\"],a[href*=\"/auth/sign_in\"]')?0:1;})()"
+    "if(document.querySelector('mod-download-modal[user-is-logged-in=\"false\"],a[href*=\"users/login\"],a[href*=\"/auth/sign_in\"]'))return 0;",
+    "return s==='complete'||document.querySelector('mod-download-modal[user-is-logged-in=\"true\"]')?1:0;})()"
 );
 pub const HOOK_JS: &str = concat!(
     "(function(){if(window.__nxmHook)return 1;window.__nxmHook=1;window.__nxm='';var re=/^nxm:/i;",
@@ -97,9 +99,30 @@ impl From<String> for TryError {
     }
 }
 
-/// Path of Brave, Edge or Chrome (the first one installed, in that order), or None when none is.
+/// The file name (no .exe) of the browser a Windows link-handler ProgId names: BraveHTML, MSEdgeHTM and
+/// ChromeHTML (a second install adds a suffix; Beta, Dev and Canary IDs map to the stable browser), None for any
+/// other browser.
+pub fn browser_of(prog_id: &str) -> Option<&'static str> {
+    let id = prog_id.to_ascii_lowercase();
+    ["brave", "msedge", "chrome"].into_iter().find(|b| id.starts_with(b))
+}
+
+/// The user's default browser (the one that opens https links) when it is Brave, Edge or Chrome.
+fn default_browser() -> Option<&'static str> {
+    use shared::win::{HKCU, reg_get};
+    let key = r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https";
+    // Windows 11 24H2 keeps the choice in UserChoiceLatest, older Windows in UserChoice
+    let id = reg_get(HKCU, &format!(r"{key}\UserChoiceLatest\ProgId"), "ProgId")
+        .or_else(|| reg_get(HKCU, &format!(r"{key}\UserChoice"), "ProgId"))?;
+    browser_of(&id)
+}
+
+/// Path of the user's default browser when it is Brave, Edge or Chrome and installed, else the first of those
+/// installed (in that order), or None when none is.
 pub fn find_browser() -> Option<PathBuf> {
-    BROWSERS.iter().find_map(|(var, tail)| {
+    let first = default_browser().map(|b| format!(r"\{b}.exe"));
+    let preferred = BROWSERS.iter().filter(|(_, tail)| first.as_ref().is_some_and(|f| tail.ends_with(f.as_str())));
+    preferred.chain(BROWSERS.iter()).find_map(|(var, tail)| {
         let base = PathBuf::from(std::env::var_os(var)?);
         // an empty or relative variable would look in the current folder
         let p = base.join(tail);
@@ -395,7 +418,9 @@ impl Tab {
         while Instant::now() < deadline {
             // a script error means the context reset while the page loads: keep waiting
             match self.run_js(READY_JS) {
-                Ok(v) if v == "complete" => return Ok(()),
+                // "interactive" is enough: the page is built, and one slow ad or image can keep Nexus from "complete"
+                // for a minute (the click script waits for the button itself)
+                Ok(v) if v == "complete" || v == "interactive" => return Ok(()),
                 Ok(v) => check = v == "check",
                 Err(_) => {}
             }
@@ -488,12 +513,31 @@ impl Browser {
             let port = std::fs::read_to_string(&port_file).ok().and_then(|t| t.split_whitespace().next()?.parse().ok());
             if let Some(port) = port {
                 self.port = port;
+                // the window can show a moment after the port: take it off the taskbar as soon as it does
+                let shown = Instant::now() + Duration::from_secs(3);
+                while !self.visible && self.to_background() == 0 && Instant::now() < shown {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
                 return Ok(());
             }
             std::thread::sleep(Duration::from_millis(200));
         }
         self.quit();
         Err("the browser did not open its DevTools port".into())
+    }
+
+    /// The browser process id while it runs.
+    pub fn pid(&self) -> Option<u32> {
+        self.proc.as_ref().map(Child::id)
+    }
+
+    /// Hidden mode: takes the off-screen windows off the taskbar and Alt+Tab, so the click runs in the background.
+    /// Returns how many browser windows there are (0 in visible mode).
+    fn to_background(&self) -> usize {
+        match &self.proc {
+            Some(p) if !self.visible => shared::win::to_background(p.id()),
+            _ => 0,
+        }
     }
 
     fn http(&self, path: &str, method: &str, timeout: u64) -> Result<Value, String> {
@@ -513,6 +557,7 @@ impl Browser {
             Err(e) if e.starts_with("HTTP Error") => self.http(&path, "GET", 5)?,
             r => r?,
         };
+        self.to_background();
         let mut tab = Tab::new(self.port, target)?;
         tab.call("Page.enable", json!({}), Duration::from_secs(15))?;
         tab.call("Network.enable", json!({}), Duration::from_secs(15))?;

@@ -10,6 +10,12 @@ between the two apps without losing mods. This file lists every place where the 
   `READY_JS` accepted a new tab while it was still `about:blank`. Python v1.3.4 and v1.3.5 have the same fixes. A real hidden-Brave test passes in both apps.
 - The DevTools PUT that opens a tab now sends a `Content-Length` (Rust only: the browser closes the connection
   without one).
+- Nexus page changes in 2026-11 (Rust v2.0.1 to v2.0.3 only): the click searches the open shadow root of
+  `mod-download-modal`; the browser is a normal window off-screen, not headless (Cloudflare stops headless), and a
+  tool window with no taskbar button; a page counts as ready at "interactive" (one slow ad can hold "complete" for
+  a minute); the login checks know the new `/auth/sign_in` link and the popup's `user-is-logged-in` flag.
+- `find_browser` prefers the user's default browser (the Windows https choice) when it is Brave, Edge or Chrome
+  (Rust only; Python always tries Brave first).
 
 ## Stricter or safer
 - The install file walk does not go into symlinks or junctions (Python 3.12 `rglob` goes into junctions).
