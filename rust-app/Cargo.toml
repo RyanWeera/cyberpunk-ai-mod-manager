@@ -3,7 +3,7 @@ resolver = "3"
 members = ["shared", "testkit", "installer", "downloads", "virus_scan", "crash_doctor", "video_finder", "local_ai", "ai_link", "manager_ui"]
 
 [workspace.package]
-version = "2.0.2"
+version = "2.0.3"
 edition = "2024"
 license = "MIT"
 

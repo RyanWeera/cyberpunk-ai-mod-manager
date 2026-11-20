@@ -1,5 +1,10 @@
-//! Small Windows helpers: registry strings (current user or machine) and UTF-16 text.
-use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+//! Small Windows helpers: registry strings (current user or machine), UTF-16 text, and windows off the taskbar.
+use windows_sys::Win32::Foundation::{ERROR_SUCCESS, HWND, LPARAM};
+use windows_sys::core::BOOL;
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    EnumWindows, GWL_EXSTYLE, GetWindowLongPtrW, GetWindowThreadProcessId, IsWindowVisible, SW_HIDE, SW_SHOWNOACTIVATE,
+    SetWindowLongPtrW, ShowWindowAsync, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+};
 use windows_sys::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, RRF_RT_REG_SZ, RegCloseKey,
     RegCreateKeyExW, RegGetValueW, RegSetValueExW,
@@ -64,6 +69,40 @@ pub fn reg_set(root: Root, subkey: &str, name: &str, value: &str) -> std::io::Re
         return Err(std::io::Error::from_raw_os_error(rc as i32));
     }
     Ok(())
+}
+
+unsafe extern "system" fn each_window(hwnd: HWND, lp: LPARAM) -> BOOL {
+    // SAFETY: `lp` is the (pid, windows) pair that `to_background` passes, alive during EnumWindows.
+    let (pid, wins) = unsafe { &mut *(lp as *mut (u32, Vec<HWND>)) };
+    let mut owner = 0u32;
+    // SAFETY: a window handle from EnumWindows.
+    unsafe {
+        GetWindowThreadProcessId(hwnd, &mut owner);
+        if owner == *pid && IsWindowVisible(hwnd) != 0 {
+            wins.push(hwnd);
+        }
+    }
+    1
+}
+
+/// Takes the visible windows of process `pid` off the taskbar and Alt+Tab (a tool window). They stay open, so
+/// their pages keep running. Returns how many visible windows the process has.
+pub fn to_background(pid: u32) -> usize {
+    let mut st: (u32, Vec<HWND>) = (pid, vec![]);
+    // SAFETY: the callback only uses `st` during the call; the handles are windows EnumWindows just gave.
+    unsafe {
+        EnumWindows(Some(each_window), &mut st as *mut _ as LPARAM);
+        for &w in &st.1 {
+            let ex = GetWindowLongPtrW(w, GWL_EXSTYLE);
+            if ex & WS_EX_TOOLWINDOW as isize == 0 {
+                // the taskbar reads the style when a window shows, so hide it, change it, show it again
+                ShowWindowAsync(w, SW_HIDE);
+                SetWindowLongPtrW(w, GWL_EXSTYLE, (ex | WS_EX_TOOLWINDOW as isize) & !(WS_EX_APPWINDOW as isize));
+                ShowWindowAsync(w, SW_SHOWNOACTIVATE);
+            }
+        }
+    }
+    st.1.len()
 }
 
 #[cfg(test)]

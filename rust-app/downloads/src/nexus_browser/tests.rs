@@ -75,6 +75,15 @@ fn test_recv_reads_the_socket() {
     assert!(ws.recv(Duration::from_secs(1)).is_err());
 }
 
+#[test]
+fn test_default_browser_prog_ids() {
+    assert_eq!(browser_of("BraveHTML"), Some("brave"));
+    assert_eq!(browser_of("MSEdgeHTM"), Some("msedge"));
+    assert_eq!(browser_of("ChromeHTML.ABC123"), Some("chrome"));
+    assert_eq!(browser_of("FirefoxURL-308046B0AF4A39CB"), None);
+    assert!(BROWSERS.iter().any(|(_, t)| t.ends_with(r"\brave.exe")), "find_browser matches a default browser by its file name");
+}
+
 // test_browser.py ScanNxm.test_finds_it_anywhere
 #[test]
 fn test_finds_it_anywhere() {
@@ -325,11 +334,11 @@ fn test_brave_first_with_its_own_profile() {
         std::env::set_var("ProgramFiles(x86)", "");
         std::env::set_var("LocalAppData", "");
     }
-    let brave = find_browser();
-    let brave_profile = Browser::new(&tmp.join("p"), false).profile;
+    // with no default browser among the three (the PC's own default would decide otherwise)
+    let brave = find_browser_from(None);
+    let default_edge = find_browser_from(Some("msedge"));
     std::fs::remove_file(tmp.join(BRAVE)).unwrap();
-    let edge = find_browser();
-    let edge_profile = Browser::new(&tmp.join("p"), false).profile;
+    let edge = find_browser_from(Some("brave"));
     for (k, v) in vars.iter().zip(old) {
         // SAFETY: as above
         unsafe {
@@ -340,9 +349,11 @@ fn test_brave_first_with_its_own_profile() {
         }
     }
     assert_eq!(brave, Some(tmp.join(BRAVE)));
-    assert_eq!(brave_profile, tmp.join("p").join("brave"));
-    assert!(edge.unwrap().to_string_lossy().ends_with("msedge.exe"));
-    assert_eq!(edge_profile, tmp.join("p")); // Edge keeps the old folder
+    assert!(default_edge.unwrap().to_string_lossy().ends_with("msedge.exe")); // the default browser comes first
+    let edge = edge.unwrap(); // a default browser that is not installed falls back to the order
+    assert!(edge.to_string_lossy().ends_with("msedge.exe"));
+    assert_eq!(profile_for(brave.as_deref(), &tmp.join("p")), tmp.join("p").join("brave"));
+    assert_eq!(profile_for(Some(&edge), &tmp.join("p")), tmp.join("p")); // Edge keeps the old folder
 }
 
 // test_browser.py CloseTab.test_plain_text_close_answer_is_not_an_error
