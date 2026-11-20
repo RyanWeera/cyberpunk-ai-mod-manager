@@ -45,13 +45,20 @@ pub const HOOK_JS: &str = concat!(
     "(function(){if(window.__nxmHook)return 1;window.__nxmHook=1;window.__nxm='';var re=/^nxm:/i;",
     "var cap=function(u){if(u&&re.test(u)&&!window.__nxm)window.__nxm=u;};var o=window.open;",
     "window.open=function(u){cap(u);return o?o.apply(window,arguments):null;};",
-    "document.addEventListener('click',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;",
-    "if(a&&re.test(a.getAttribute('href')||''))cap(a.href);},true);return 1;})()"
+    // composedPath also sees a link inside a shadow root (the click target is then the shadow host)
+    "document.addEventListener('click',function(e){var p=e.composedPath?e.composedPath():[e.target];",
+    "for(var i=0;i<p.length;i++){var a=p[i];if(a&&a.getAttribute&&re.test(a.getAttribute('href')||'')){cap(a.href);break;}}},true);",
+    "return 1;})()"
 );
+/// Nexus draws its download popup as a web component (`mod-download-modal`), so the button is inside an open
+/// shadow root and can appear after the page load: search shadow roots too, and wait up to 10 seconds.
 pub const CLICK_JS: &str = concat!(
-    "(function(){var els=document.querySelectorAll('a,button,input[type=\"button\"],input[type=\"submit\"]');",
-    "for(var i=0;i<els.length;i++){var e=els[i],t=e.textContent||e.value||'';",
-    "if(/slow\\s*download/i.test(t)&&e.offsetParent){e.scrollIntoView({block:'center'});e.click();return 1;}}return 0;})()"
+    "(async function(){var find=function(r){var els=r.querySelectorAll('*');for(var i=0;i<els.length;i++){var e=els[i];",
+    "if(/^(A|BUTTON)$/.test(e.tagName)||(e.tagName==='INPUT'&&/^(button|submit)$/i.test(e.type))){var t=e.textContent||e.value||'';",
+    "if(/slow\\s*download/i.test(t)&&e.getClientRects().length)return e;}",
+    "if(e.shadowRoot){var f=find(e.shadowRoot);if(f)return f;}}return null;};",
+    "for(var n=0;n<40;n++){var e=find(document);if(e){e.scrollIntoView({block:'center'});e.click();return 1;}",
+    "await new Promise(function(r){setTimeout(r,250);});}return 0;})()"
 );
 pub const POLL_JS: &str = "(function(){return window.__nxm||''})()";
 /// A new tab is a "complete" about:blank before it starts to load the page, so that does not count.
@@ -359,7 +366,7 @@ impl Tab {
 
     /// Evaluate js and return its value (returned by value, so JSON-safe results only).
     pub fn run_js(&mut self, js: &str) -> Result<Value, String> {
-        let r = self.call("Runtime.evaluate", json!({"expression": js, "returnByValue": true}), Duration::from_secs(15))?;
+        let r = self.call("Runtime.evaluate", json!({"expression": js, "returnByValue": true, "awaitPromise": true}), Duration::from_secs(15))?;
         if let Some(e) = r.get("exceptionDetails").filter(|e| !e.is_null()) {
             return Err(e["exception"]["description"].as_str().unwrap_or("the page script failed").to_string());
         }
