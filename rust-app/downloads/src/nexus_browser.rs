@@ -84,6 +84,28 @@ pub fn find_browser() -> Option<PathBuf> {
     })
 }
 
+/// Ends each process tree (with its child processes) whose command line has `--user-data-dir=<CP_PROFILE>`, quoted or not.
+const KILL_LEFTOVERS: &str = concat!(
+    // \x22 is a double quote: a literal one could be lost when the script is passed to powershell.exe
+    "$re='--user-data-dir=\\x22?'+[regex]::Escape($env:CP_PROFILE)+'(\\x22|\\s|$)';",
+    "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match $re } | ",
+    "ForEach-Object { taskkill.exe /PID $_.ProcessId /T /F *> $null }"
+);
+
+/// A browser left over from an earlier run (the app crashed or was ended) keeps the profile folder,
+/// and a new browser on that folder hands its work to it and quits at once. End such browsers first.
+pub fn kill_leftovers(profile: &Path) {
+    use std::os::windows::process::CommandExt;
+    let _ = Command::new(shared::sys32().join("WindowsPowerShell/v1.0/powershell.exe"))
+        .args(["-NoProfile", "-NonInteractive", "-Command", KILL_LEFTOVERS])
+        .env("CP_PROFILE", profile)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+}
+
 /// The first string in a JSON value that starts with nxm:// (DevTools events nest it anywhere), or "".
 pub fn scan_nxm(x: &Value) -> String {
     match x {
@@ -421,6 +443,7 @@ impl Browser {
         use std::os::windows::process::CommandExt;
         let exe = self.exe.clone().ok_or("no Brave, Edge or Chrome found on this PC")?;
         std::fs::create_dir_all(&self.profile).map_err(io)?;
+        kill_leftovers(&self.profile);
         let port_file = self.profile.join("DevToolsActivePort");
         let _ = std::fs::remove_file(&port_file); // a crashed browser leaves its old port behind
         let mut cmd = Command::new(exe);

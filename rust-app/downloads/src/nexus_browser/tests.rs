@@ -361,3 +361,32 @@ fn test_plain_text_close_answer_is_not_an_error() {
     let n = b.read(&mut got).unwrap();
     assert_eq!(ws_message(&got[..n]).0.unwrap().0, 0x8, "the WebSocket gets a close frame");
 }
+
+/// A stand-in for a leftover browser: a sleeping cmd.exe whose command line names the profile folder.
+fn fake_browser(profile: &Path) -> std::process::Child {
+    Command::new(shared::sys32().join("cmd.exe"))
+        .arg("/c")
+        .arg(format!("ping -n 60 127.0.0.1 >nul & rem --user-data-dir={}", profile.display()))
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap()
+}
+
+#[test]
+fn test_a_leftover_browser_on_the_profile_is_ended() {
+    let dir = tempfile::tempdir().unwrap();
+    let profile = dir.path().join("browser");
+    let mut leftover = fake_browser(&profile);
+    // another browser's folder inside this one stays open
+    let mut other = fake_browser(&profile.join("brave"));
+    kill_leftovers(&profile);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while matches!(leftover.try_wait(), Ok(None)) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let ended = leftover.try_wait().unwrap().is_some();
+    let kept = other.try_wait().unwrap().is_none();
+    kill_leftovers(&profile.join("brave")); // ends cmd.exe and its ping before an assert can fail
+    assert!(ended);
+    assert!(kept);
+}
