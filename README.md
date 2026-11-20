@@ -21,6 +21,8 @@ the Advanced Crash Reporter mod, so a crash report names the mod that caused it.
 
 ![Mods tab](docs/screenshot.png)
 
+![Browse tab](docs/browse.png)
+
 ## Get started in 3 steps
 
 1. **Download and open it.** Click the yellow button above, then double-click `CP2077.AI.Mod.Manager.exe`. You can keep it anywhere, for example on your Desktop.

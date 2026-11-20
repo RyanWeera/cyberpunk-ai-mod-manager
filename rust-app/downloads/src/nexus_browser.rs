@@ -120,7 +120,12 @@ fn default_browser() -> Option<&'static str> {
 /// Path of the user's default browser when it is Brave, Edge or Chrome and installed, else the first of those
 /// installed (in that order), or None when none is.
 pub fn find_browser() -> Option<PathBuf> {
-    let first = default_browser().map(|b| format!(r"\{b}.exe"));
+    find_browser_from(default_browser())
+}
+
+/// Like `find_browser`, with `default` ("brave", "msedge" or "chrome") in place of the PC's default browser.
+fn find_browser_from(default: Option<&str>) -> Option<PathBuf> {
+    let first = default.map(|b| format!(r"\{b}.exe"));
     let preferred = BROWSERS.iter().filter(|(_, tail)| first.as_ref().is_some_and(|f| tail.ends_with(f.as_str())));
     preferred.chain(BROWSERS.iter()).find_map(|(var, tail)| {
         let base = PathBuf::from(std::env::var_os(var)?);
@@ -481,12 +486,17 @@ pub struct Browser {
     port: u16,
 }
 
+/// Each browser gets its own profile folder: one browser cannot always read the login another one saved.
+/// Edge keeps the base folder, as before.
+fn profile_for(exe: Option<&Path>, base: &Path) -> PathBuf {
+    let stem = exe.and_then(|e| e.file_stem()).map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if stem.is_empty() || stem == "msedge" { base.to_path_buf() } else { base.join(stem) }
+}
+
 impl Browser {
     pub fn new(profile: &Path, visible: bool) -> Browser {
         let exe = find_browser();
-        let stem = exe.as_ref().and_then(|e| e.file_stem()).map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
-        // each browser gets its own profile folder: one browser cannot always read the login another one saved
-        let profile = if stem.is_empty() || stem == "msedge" { profile.to_path_buf() } else { profile.join(stem) };
+        let profile = profile_for(exe.as_deref(), profile);
         Browser { exe, visible, profile, proc: None, port: 0 }
     }
 
