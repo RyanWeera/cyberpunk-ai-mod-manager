@@ -15,6 +15,7 @@ import os
 import socket
 import struct
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -328,6 +329,7 @@ class Clicker:
         self.profile, self.log, self.on_link = Path(profile), log, on_link
         self.on_fail, self.waiting, self.login_wait = on_fail, waiting, login_wait
         self.browser = None
+        self.busy = threading.Lock()  # one click at a time: two would share one browser profile
 
     def _hidden(self):
         if self.browser and self.browser.alive():
@@ -341,6 +343,11 @@ class Clicker:
         """Run on a worker thread: click for one waiting job. Never raises; any failure goes to on_fail."""
         from downloads import nexus  # late import: this module stays usable without the rest of the app
         url = nexus.files_page(job["src"]["mod_id"], job["src"]["file_id"])
+        with self.busy:
+            if self.waiting(job):  # the user may have skipped it while another click ran
+                self._click(job, url)
+
+    def _click(self, job, url):
         try:
             try:
                 link = self._try(url)
@@ -348,10 +355,13 @@ class Clicker:
                 if not self._login(url):
                     return self.on_fail(job, "the Nexus login window was closed or timed out")
                 link = self._try(url)
+            # the link comes from page events: take it only when it is for this job's file
+            if f"/mods/{job['src']['mod_id']}/files/{job['src']['file_id']}?" not in link + "?":
+                raise RuntimeError("Nexus gave a download link for another file")
+            if self.waiting(job):
+                self.on_link(link)
         except Exception as e:  # noqa: BLE001 - boundary: the manual click always stays possible
             return self.on_fail(job, str(e))
-        if self.waiting(job):
-            self.on_link(link)
 
     def _try(self, url):
         """Open the file's page hidden, click, and return the nxm:// link."""

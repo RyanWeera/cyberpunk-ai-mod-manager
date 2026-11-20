@@ -4,6 +4,7 @@ import contextlib
 import queue
 import tempfile
 import time
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -115,6 +116,33 @@ class ClickerFlow(unittest.TestCase):
         tab = FakeTab({nexus_browser.LOGIN_JS: 0, nexus_browser.CLICK_JS: 1, "nxm": "nxm://cyberpunk2077/mods/1/files/2"})
         logs, links, fails, c = self.run_click(tab, waiting=lambda j: False)
         self.assertEqual((links, fails), ([], []))
+
+    def test_clicks_run_one_at_a_time(self):
+        c = nexus_browser.Clicker(Path("p"))
+        with mock.patch.object(c, "_click") as inner:
+            with c.busy:  # a click is running
+                t = threading.Thread(target=c.click, args=(job(),))
+                t.start()
+                t.join(0.3)
+                self.assertTrue(t.is_alive())  # the second click waits
+                inner.assert_not_called()
+            t.join(2)
+        inner.assert_called_once()
+
+    def test_a_link_for_another_file_falls_back(self):
+        tab = FakeTab({nexus_browser.LOGIN_JS: 0, nexus_browser.CLICK_JS: 1, "nxm": "nxm://cyberpunk2077/mods/1/files/23?key=k"})
+        logs, links, fails, c = self.run_click(tab)
+        self.assertEqual((links, fails), ([], ["Nexus gave a download link for another file"]))
+
+    def test_an_error_while_handing_the_link_over_falls_back(self):
+        def bad(link):
+            raise ValueError("bad link")
+        tab = FakeTab({nexus_browser.LOGIN_JS: 0, nexus_browser.CLICK_JS: 1, "nxm": "nxm://cyberpunk2077/mods/1/files/2"})
+        fails = []
+        c = nexus_browser.Clicker(Path("p"), on_link=bad, on_fail=lambda j, w: fails.append(w))
+        c.browser = FakeBrowser(tab)
+        c.click(job())
+        self.assertEqual(fails, ["bad link"])
 
     def test_no_link_after_the_click_falls_back(self):
         tab = FakeTab({nexus_browser.LOGIN_JS: 0, nexus_browser.CLICK_JS: 1, "nxm": None})

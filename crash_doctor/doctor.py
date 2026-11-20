@@ -575,10 +575,10 @@ def keep_logs(store, since, report=None, keep=10, limit=20_000_000):
     try:
         if report:
             r = Path(report)
-            files += [(p, "report/" + p.relative_to(r.parent).as_posix()) for p in ([r] if r.is_file() else r.rglob("*")) if p.is_file()]
+            files += [(p, "report/" + p.relative_to(r.parent).as_posix()) for p in ([r] if r.is_file() else r.rglob("*")) if p.is_file() and not p.is_symlink()]
         if game:
             files += [(p, p.relative_to(game).as_posix()) for base in LOGS if (game / base).is_dir()
-                      for p in (game / base).rglob("*.log") if p.stat().st_mtime >= since - 15]
+                      for p in (game / base).rglob("*.log") if not p.is_symlink() and p.stat().st_mtime >= since - 15]
         if not files:
             return None
         out.mkdir(exist_ok=True)

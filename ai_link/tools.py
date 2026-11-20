@@ -21,7 +21,7 @@ TOOLS = [
      "inputSchema": {"type": "object", "required": ["url"], "properties": {"url": {"type": "string", "description":
          "The video link, or a caption or mod name to search Nexus for."}}}},
     {"name": "status", "description": "The manager's state: game folder and Nexus account set-up, downloads in progress "
-     "(and the files that wait for the user's click on Nexus), and the installed mods in load order.",
+     "(and the files that wait for a 'Slow download' click on Nexus), and the installed mods in load order.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "sort_load_order", "description": "Put the installed mods in the best load order (frameworks first, each mod "
      "below the mods it needs, patches below the mods they change). The user can undo it in the Crash doctor tab.",

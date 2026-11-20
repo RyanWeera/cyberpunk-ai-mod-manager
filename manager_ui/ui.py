@@ -801,6 +801,8 @@ class App:
             self.pack_open.symmetric_difference_update({name})
             self.refresh_pack_page()
         for text, style, cmd, tip in (
+                *((("Complete installation", "Get.TButton", lambda: self.complete_pack(name),
+                    "Download and install this pack's mods that are not installed yet."),) if missing else ()),
                 ("Use", "Get.TButton", lambda: self.use_pack(name), "Turn on this pack's mods in its order and turn off the rest."),
                 ("▶  Launch", "TButton", lambda: self.launch_pack(name), "Start the game with this pack."),
                 ("Hide mods" if is_open else "Show mods", "TButton", toggle, "The mods in this pack, lowest priority first."),
@@ -868,8 +870,9 @@ class App:
         ttk.Label(card, text="How downloads work", style="Card.TLabel", font=("Segoe UI Semibold", 10)).pack(anchor="w")
         for line in ("•  Frameworks (RED4ext, CET, redscript, ArchiveXL, TweakXL, Codeware, Input Loader, Mod Settings) "
                      "come from GitHub: no account, no clicks.",
-                     "•  Nexus with a free account: Nexus gives a file only to a person who clicks. I open each file's page in "
-                     "your browser. Click 'Slow download' and I do the rest, then open the next page.",
+                     "•  Nexus with a free account: Nexus gives a file only after a click on 'Slow download'. I click it for you "
+                     "in a hidden browser after you log in to Nexus once (Settings can turn this off). When that fails, I open "
+                     "the file's page in your browser: click 'Slow download' there and I do the rest.",
                      "•  Nexus Premium: no clicks at all.  •  Every download is virus-scanned first (you can turn that off in Settings)."):
             ttk.Label(card, text=line, style="CardDim.TLabel", wraplength=self.px(1080), justify="left").pack(anchor="w", pady=1)
 
@@ -992,8 +995,8 @@ class App:
             "Give a mod link or a video link to Claude and ask it to set the mods up: it adds them here, sorts the load order "
             "and checks for problems. This works in AI apps that support MCP, such as Claude Desktop, Claude Code and Cursor. "
             "The AI uses this window, so you see what it does. AI apps add only Nexus Mods links and the core frameworks: "
-            "paste other links in the Add mods tab yourself. With a free Nexus account you still click 'Slow download' for "
-            "each Nexus file.")).pack(anchor="w", pady=(2, 8))
+            "paste other links in the Add mods tab yourself. With a free Nexus account the 'Slow download' clicks work as in "
+            "the Add mods tab.")).pack(anchor="w", pady=(2, 8))
         self._buttons(f, [("Copy setup for Claude Desktop", lambda: self.copy_setup(True), "Copies the MCP setup text for Claude Desktop and similar apps."),
                           ("Copy setup for Claude Code", lambda: self.copy_setup(False), "Copies the command that adds this app to Claude Code.")]).pack(anchor="w")
         ttk.Label(f, style="Dim.TLabel", wraplength=wrap, justify="left", text=(
@@ -1053,11 +1056,32 @@ class App:
         pick.grid(row=13, column=1, columnspan=2, sticky="w", pady=(10, 3))
         for name in THEMES:
             ttk.Radiobutton(pick, text=name, value=name, variable=self.theme_var, command=self.set_theme).pack(side="left", padx=(0, 14))
+        ttk.Label(f, text="App").grid(row=14, column=0, sticky="w", pady=(10, 3))
+        ttk.Label(f, text=f"Version {VERSION}", style="Dim.TLabel").grid(row=14, column=1, sticky="w", padx=8, pady=(10, 3))
+        self.update_btn = ttk.Button(f, text="Update", command=self.update_app)
+        self.update_btn.grid(row=14, column=2, sticky="w", pady=(10, 3))
+        Tip(self.update_btn, "Get the newest version of this app from GitHub. The app restarts by itself.")
         foot = ttk.Frame(f)
-        foot.grid(row=14, column=0, columnspan=3, sticky="we", pady=(22, 0))
+        foot.grid(row=15, column=0, columnspan=3, sticky="we", pady=(22, 0))
         ttk.Button(foot, text="Open data folder", command=lambda: os.startfile(self.store.root)).pack(side="right")
         ttk.Label(foot, style="Dim.TLabel", text=f"Mods, backups and settings are kept in {self.store.root}").pack(side="left", fill="x")
         self.refresh_settings()
+
+    def update_app(self):
+        self.update_btn.state(["disabled"])  # one update at a time; every "update" event says when it may click again
+        self.say("Looking for a new version on GitHub…")
+        self.ctl.bg(self.ctl.update_app)
+
+    def show_update(self, p):
+        if "ask" in p:
+            if messagebox.askyesno("Update", f"Version {p['ask']['tag']} is on GitHub (you have {VERSION}).\n\n"
+                                             "Download it, scan it with Microsoft Defender and restart the app with it?"):
+                return self.ctl.bg(self.ctl.update_app, p["ask"])
+            p = {"text": "Update skipped."}
+        self.say(p["text"])
+        self.update_btn.state(["disabled"] if p.get("busy") or p.get("restart") else ["!disabled"])
+        if p.get("restart"):
+            self.close()
 
     # ---------- helpers ----------
     def _selected(self, tree):
@@ -1149,6 +1173,13 @@ class App:
             return messagebox.showinfo("Mod packs", "Pick a mod pack next to 'Launch game' first.")
         self.say(self.ctl.use_pack(pack))
         return self.redeploy()
+
+    def complete_pack(self, pack):
+        n = self.ctl.complete_pack(pack)
+        if not n:
+            return self.say(f"I cannot download the missing mods of '{pack}': they did not come from Nexus.")
+        self.say(f"Installing {n} mod(s) of '{pack}'. Follow them in the Downloads tab.")
+        self.tabs.select(self.tab["Downloads"])
 
     def delete_pack(self, pack=None):
         pack = pack or self.picked_pack()
@@ -1673,7 +1704,8 @@ class App:
             self.refresh_settings()
             self.say("Nexus download buttons now send files to this app.")
             waiting = next((j for j in self.ctl.jobs if j["state"] == "waiting"), None)
-            if waiting:  # its last click went to the other app: show its page again
+            # its last click went to the other app: show its page again (not while the hidden browser clicks)
+            if waiting and (not self.store.settings["auto_click"] or waiting.get("manual")):
                 self.ctl.reopen(waiting)
 
     def hide_banner(self):
@@ -1692,7 +1724,7 @@ class App:
         on, other = self.registered(), self.nxm_owner()
         self.nxm_info.configure(foreground=OK if on else WARN, text="✔  'Slow download' on Nexus sends files to this app" if on else
                                 f"✖  'Slow download' on Nexus sends files to {other}, not to this app" if other else
-                                "✖  'Slow download' on Nexus does nothing yet")
+                                "✖  'Slow download' on Nexus does nothing yet" + (" (not needed while I click for you)" if self.store.settings["auto_click"] else ""))
         self.nxm_btn.configure(text="Set it up again" if on else "\u25b6  Fix it: use this app", style="TButton" if on else "Big.TButton")
         self.refresh_setup()
 
@@ -1761,15 +1793,18 @@ class App:
         self.was_busy = bool(active)
         waiting = next((j for j in jobs if j["state"] == "waiting"), None)
         needkey = any(j["state"] == "needkey" for j in jobs)
-        if waiting and self.register and not self.registered() and not self.asked_nxm:
+        auto = waiting and self.store.settings["auto_click"] and not waiting.get("manual")  # the hidden browser clicks
+        if waiting and not auto and self.register and not self.registered() and not self.asked_nxm:
             self.asked_nxm = True  # once per run: the user may want the other app to keep Nexus links
             if messagebox.askyesno("Nexus download button", "Your 'Slow download' clicks go to another app (such as Vortex), "
                                    "not to this one, so nothing happens here.\n\nSend Nexus downloads to this app?"):
                 self.register_nxm()  # also opens the waiting page again
         if waiting:
             left = sum(j["state"] == "waiting" for j in jobs)
-            self.dl_banner_text.configure(text=f"Your browser shows the Nexus page for '{waiting['name']}'. Click 'Slow download' "
-                                               f"there and I do the rest. {left} click{'s' if left > 1 else ''} left.")
+            self.dl_banner_text.configure(text=(
+                f"I click 'Slow download' on Nexus for you in a hidden browser. {left} file{'s' if left > 1 else ''} left." if auto else
+                f"Your browser shows the Nexus page for '{waiting['name']}'. Click 'Slow download' "
+                f"there and I do the rest. {left} click{'s' if left > 1 else ''} left."))
             self.dl_banner_btn.configure(text="Open page again", command=lambda: self.ctl.reopen(waiting))
         elif needkey:
             self.dl_banner_text.configure(text="Nexus downloads wait for your API key. Add it in Settings and they continue by themselves.")
@@ -1864,6 +1899,8 @@ class App:
                     self.ai_info.configure(text=p, foreground=OK if p.startswith("✔") else BAD if p.startswith("✖") else DIM)
                 elif kind == "ai":
                     self.show_ai(p)
+                elif kind == "update":
+                    self.show_update(p)
                 elif kind == "pack_choice":
                     self.pack_choice(p)
                 elif kind == "outdated":

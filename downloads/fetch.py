@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import re
+import string
 import subprocess
 import time
 import urllib.parse
@@ -45,6 +46,23 @@ def github_latest(repo):
     if not asset:
         raise RuntimeError(f"{repo} has no Windows download in its latest release")
     return {"tag": d["tag_name"], "url": asset["browser_download_url"], "name": asset["name"]}
+
+
+APP_REPO = "RyanWeera/cyberpunk-ai-mod-manager"
+
+
+def app_latest():
+    """{"tag", "url"} of the exe in this app's newest GitHub release, or None when this version is the newest."""
+    d = http_json(f"https://api.github.com/repos/{APP_REPO}/releases/latest")
+    ver = lambda s: tuple(int(n) for n in re.findall(r"\d+", s))
+    if ver(d["tag_name"]) <= ver(VERSION):
+        return None
+    own = f"https://github.com/{APP_REPO}/releases/download/"  # only this repo's release files
+    asset = next((a for a in d.get("assets", []) if a["name"].lower().endswith(".exe")
+                  and a["browser_download_url"].startswith(own)), None)
+    if not asset:
+        raise RuntimeError(f"Release {d['tag_name']} has no exe to download")
+    return {"tag": d["tag_name"], "url": asset["browser_download_url"]}
 
 
 def ascii_name(name):
@@ -104,6 +122,7 @@ def thumbnails(urls, folder, w, h):
 
 def download(url, folder, progress=None, headers=None):
     """Download url into folder. progress(done_bytes, total_bytes) is called about twice a second."""
+    url = urllib.parse.quote(url, safe=string.punctuation)  # Nexus CDN links have raw spaces; keeps %xx as it is
     req = urllib.request.Request(url, headers={**UA, **(headers or {})})
     with urllib.request.urlopen(req, timeout=60) as r:
         if urllib.parse.urlparse(r.url).scheme != "https":  # also catches an https link that redirects to http

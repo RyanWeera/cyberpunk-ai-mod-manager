@@ -23,7 +23,7 @@ A Windows mod manager for Cyberpunk 2077 that sets your mods up for you and fixe
    - Click **Find it for me** to find your Cyberpunk 2077 folder (Steam, GOG or Epic).
    - Click **Get my key**, copy your personal API key from Nexus, and paste it. Free accounts have one too.
    - Click **Use this app for Nexus downloads**, so the download buttons on Nexus send files to the app.
-3. **Add mods and play.** In **Add mods**, paste mod links or a collection link and click **Download and set up everything**. When the **Downloads** tab is finished, click **Launch game**. With a free Nexus account you click **Slow download** once per Nexus file, except for mods whose author publishes the same version on GitHub (see [below](#nexus-mods-and-free-accounts)).
+3. **Add mods and play.** In **Add mods**, paste mod links or a collection link and click **Download and set up everything**. When the **Downloads** tab is finished, click **Launch game**. With a free Nexus account the app clicks **Slow download** for you after you log in to Nexus once (see [below](#nexus-mods-and-free-accounts), and read the warning there).
 
 The yellow banner at the top of the app shows which set-up steps are still missing.
 
@@ -31,7 +31,7 @@ The yellow banner at the top of the app shows which set-up steps are still missi
 
 - **Browse Nexus Mods in the app.** The **Browse** page (the globe in the bar on the left) lists Cyberpunk 2077 mods with their pictures, downloads and endorsements. Search by name, filter by category, sort them, and click **Install**. The app downloads the mod and the mods it needs. Mods you already have show **Installed**. Switch to **Mod packs** at the top to browse Nexus collections the same way: **Install** downloads every mod in the pack and saves the pack. If the pack has optional mods, the app first asks which ones you want.
 - **A warning for mods that may not work any more.** Before the app downloads a mod, it checks whether the author removed or hid it, whether its name says it is outdated or broken, and whether it was last updated before game update 2.0. If so, you pick **Download** or **Skip**. In a mod pack, these mods are in the same list as the optional mods, and you untick the ones to skip.
-- **My mod packs.** The **My mod packs** page (the box icon in the bar on the left) shows each mod pack you installed from Nexus and each pack you saved or merged. Search them, filter by **From Nexus** or **My own**, see the mods in a pack and which ones are not installed yet, and click **Use**, **Launch** or **Delete**.
+- **My mod packs.** The **My mod packs** page (the box icon in the bar on the left) shows each mod pack you installed from Nexus and each pack you saved or merged. Search them, filter by **From Nexus** or **My own**, see the mods in a pack and which ones are not installed yet, and click **Use**, **Launch** or **Delete**. When a pack has mods that are not installed yet, click **Complete installation** to download and install them (the exact files the pack lists, with no outdated-mod question).
 - **Compatibility patches, found for you.** When you add a Nexus mod, the app looks on Nexus for patches that make it work with a mod you already have, and adds them. Mods that come from a mod pack skip this, because the pack brings its own patches.
 - **Easy mod list.** The **Mods** page shows each mod with an on/off switch, its version, and buttons to update or remove it. **Add mods** (top right) opens one list of all the ways to add mods, and **Merge packs** is next to it.
 - **Paste links, get mods.** Paste many links at once: Nexus mod pages, Nexus collections (mod packs), GitHub pages, or direct `.zip` / `.7z` / `.rar` links. Each mod's required mods are added for you.
@@ -50,20 +50,23 @@ The yellow banner at the top of the app shows which set-up steps are still missi
   - Each crash gets an ID (the module and place it crashed in), so you can see when the same crash comes back.
   - A mod that also logs errors in launches without a crash is not blamed for the crash.
 - **Styles.** Pick Cyberpunk (yellow), Arasaka (red) or Militech (amber) in the Settings tab. The window changes at once.
+- **Updates.** Click **Update** in the Settings tab. When GitHub has a newer release, the app asks first. It then downloads that release's exe and scans it with Microsoft Defender (if Defender finds a threat or cannot scan it, nothing changes). Then it closes, swaps the exe and opens again. When you run the app from source, the button runs `git pull`.
 - **Mod profiles (mod packs).** Keep different sets of mods for different play-throughs. In the Mods page, turn on the mods you want, open the **•••** menu at the top right and pick **Save this list as a pack…**: the pack keeps which mods are on and their order. Pick a pack next to **Launch game** to play with it, or pick **Use the picked pack** in the same menu to set the list to it and apply it to the game now. A pack turns off the mods it does not list, but a framework that is on stays on. Each Nexus collection you add is a pack too, and **Merge packs** makes one pack from several. Mods stay installed when you switch, so switching is fast.
 - **Load order and conflicts.** Mods lower in the list win. Archive conflicts are found by reading the `.archive` file indexes, and you choose which mod wins. **Auto-sort** (Mods tab) sorts the list for you: frameworks first, each mod below the mods it needs, and a small patch below the big mod it changes. You can undo it in the Crash doctor tab.
-- **Use Claude or another AI app.** Give a mod link or a video link to Claude and ask it to set the mods up. The app is an MCP server: Claude Desktop, Claude Code, Cursor and other MCP apps can add Nexus Mods mods and collections and the core frameworks, sort the load order and check for problems through the app's window. Other GitHub links and direct download links you paste yourself. The **AI helpers** tab copies the setup for you. With a free Nexus account you still click "Slow download" for each Nexus file.
+- **Use Claude or another AI app.** Give a mod link or a video link to Claude and ask it to set the mods up. The app is an MCP server: Claude Desktop, Claude Code, Cursor and other MCP apps can add Nexus Mods mods and collections and the core frameworks, sort the load order and check for problems through the app's window. Other GitHub links and direct download links you paste yourself. The **AI helpers** tab copies the setup for you. With a free Nexus account the **Slow download** rules [below](#nexus-mods-and-free-accounts) apply.
 - **Local AI.** The app comes with a free AI model (Qwen3.5 2B, Apache 2.0 license, tuned to debug Cyberpunk 2077 mods: see `local_ai/MODEL.md`) and the [llama.cpp](https://github.com/ggml-org/llama.cpp) engine (MIT license) in its `local_ai` folder: no install, no account, offline. It runs only while the app is open and the game is not running, so the game gets your whole PC. **Ask the local AI** (Crash doctor tab) lets it read your mods and problems, pick fixes and find patches that must load after the mod they change. In the **AI helpers** tab you can describe a bug in your own words: the AI tells you why it happens and offers fixes. You see each change first, and you can undo it.
 - **Virus scan.** Every download is scanned with Microsoft Defender before it is installed. Turn it off in Settings to go faster with big mod lists.
 - **Safe to undo.** Mods stay in their own folder and are copied into the game. Game files that a mod replaces are backed up and put back when the mod is removed.
 
 ## Nexus Mods and free accounts
 
-Nexus Mods gives a free account a download only after a person clicks **Slow download** on the website. This app follows the Nexus rules, so with a free account:
+Nexus Mods gives a free account a download only after a person clicks **Slow download** on the website. With a free account, the app clicks it for you in a hidden Edge (or Chrome) browser:
 
-1. The app opens the Nexus page of each file in your browser, one at a time.
-2. You click **Slow download**.
-3. The app downloads, scans, installs and sets up the file, then opens the next page.
+1. The first time, a browser window opens: log in to Nexus there once. The app keeps that login in its data folder.
+2. For each file, the app opens the file's page in the hidden browser, clicks **Slow download** and gets the download link.
+3. The app downloads, scans, installs and sets up the file, then goes to the next one.
+
+**Warning:** the Nexus terms do not allow a program to click **Slow download**. Nexus can ban accounts that do this, mainly for many downloads. To click yourself, turn off **Click 'Slow download' on Nexus for me** in **Settings**. Then the app opens the Nexus page of each file in your normal browser, one at a time, and you click **Slow download**. The app also does this when the hidden click fails (for example, no login, or the Nexus page changed).
 
 The download bar shows how many clicks are left. If **Slow download** does nothing, another app (such as Vortex) gets the Nexus links: open **Settings** and click **Fix it: use this app** in the **Download button** row. That row names the app that gets the links now.
 
@@ -75,7 +78,7 @@ If you click a "Mod Manager Download" button on Nexus yourself (not on a page th
 
 - **Every version:** the [Releases](../../releases) page.
 - **Check the file (optional):** each release lists the zip's SHA-256. In PowerShell, run `Get-FileHash .\CP2077.AI.Mod.Manager.zip` and compare. Unpack the zip to a folder of its own and start the exe in it.
-- **Update:** close the app, download the newest zip and unpack it over the old folder. Your mods and settings stay. If the new exe is in a different folder or has a different name, click **Use this app for Nexus downloads** again, and copy the AI app setup again (**AI helpers** tab). The version is shown in the title bar.
+- **Update:** click **Update** in the Settings tab (from v1.2.0 on). Or close the app, download the newest zip and unpack it over the old folder. Your mods and settings stay. If the new exe is in a different folder or has a different name, click **Fix it: use this app** in the Settings tab, and copy the AI app setup again (**AI helpers** tab). The version is shown in the title bar.
 - **Remove:**
   1. In the **Mods** tab, clear the **Search** box, click any mod, press **Ctrl+A**, then click **Turn on / off** until every row shows ○. This takes the mods' files out of the game folder and puts back the game files (and your own `modlist.txt`) that they replaced.
   2. Wait until the status bar says the mods are set up in the game folder, then close the app.

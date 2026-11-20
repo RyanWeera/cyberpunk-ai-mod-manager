@@ -7,6 +7,7 @@ import queue
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -16,12 +17,18 @@ from pathlib import Path
 
 from crash_doctor import doctor, watch
 from downloads import nexus, nexus_browser
-from downloads.fetch import FRAMEWORKS, FW_BY_NEXUS, FW_BY_REPO, download, github_latest
+from downloads.fetch import FRAMEWORKS, FW_BY_NEXUS, FW_BY_REPO, SYS32, app_latest, download, github_latest
 from installer import deploy, install
 from local_ai import llm
-from shared.store import GAME_EXE
+from shared.store import GAME_EXE, VERSION
 from video_finder import finder
 from virus_scan import scan
+
+# Swaps in the new exe once the old one has quit (a running exe is locked), then starts it. If the swap never works,
+# the old exe starts again.
+SWAP = r"""for ($i = 0; $i -lt 240; $i++) {
+  try { Move-Item -LiteralPath $env:CP_NEW -Destination $env:CP_EXE -Force -ErrorAction Stop; break } catch { Start-Sleep -Milliseconds 500 } }
+Start-Process -FilePath $env:CP_EXE"""
 
 # a compatibility patch's name; NOT_COMPAT: names that only speak of a game patch or say "compatible with" an item
 COMPAT = re.compile(r"patch|compat|integration|bridge", re.IGNORECASE)
@@ -67,7 +74,9 @@ class Controller:
         try:
             u = nexus.validate(self.key)
             self.premium = bool(u.get("is_premium"))
-            kind = "Premium: downloads need no clicks" if self.premium else "Free: one click per Nexus file, the rest is automatic"
+            kind = ("Premium: downloads need no clicks" if self.premium else
+                    "Free: I click 'Slow download' for you after one Nexus login" if self.store.settings["auto_click"] else
+                    "Free: one click per Nexus file, the rest is automatic")
             self.notify("key", f"Key OK for {u.get('name')}. {kind}.")
         except Exception as e:  # noqa: BLE001 - shown to the user
             self.premium = False
@@ -259,6 +268,8 @@ class Controller:
         with self.lock:
             if j["state"] != "waiting":
                 return
+            j["manual"] = True  # the window now asks the user to click
+        self._set(j, "Click 'Slow download' in your browser")
         self.notify("log", f"Automatic click failed ({why}). I opened the Nexus page again: click 'Slow download' there.")
         self.reopen(j)
 
@@ -326,7 +337,7 @@ class Controller:
                         self.notify("log", f"{j['name']}: GitHub check failed ({e})")
                 if not s["github"]:
                     j["state"] = "waiting"
-                    return self._set(j, "Waiting for your click on Nexus")
+                    return self._set(j, "Waiting for the Nexus download link")
         # One new folder per job: no two jobs share a file, and nothing here is ever the user's own file.
         work = Path(tempfile.mkdtemp(prefix="job-", dir=self.store.downloads))
         try:
@@ -466,6 +477,69 @@ class Controller:
         msg = f"Mod pack '{name}': {len(self.store.enabled())} mod(s) on" + (f", {missing} not installed yet." if missing else ".")
         self.notify("log", msg)
         return msg
+
+    def complete_pack(self, name):
+        """Download the pack's Nexus mods that are not installed yet. Returns how many it queued. Every link gets a
+        name, so each mod downloads straight away with no per-mod lookup (a merged pack can hold thousands)."""
+        with self.store.lock:
+            have = {m["id"] for m in self.store.mods}
+            names = {k: v for info in self.store.pack_info.values() for k, v in info.get("names", {}).items()}
+            links = [{"type": "nexus", "mod_id": int(m[1]), "file_id": int(m[2]), "name": names.get(mid)}
+                     for mid, _ in self.store.packs.get(name, []) if mid not in have
+                     for m in [re.fullmatch(r"nexus-(\d+)-(\d+)", mid)] if m]
+
+        def run():
+            unnamed = sorted({link["mod_id"] for link in links if not link["name"]})
+            found = {}
+            for i in range(0, len(unnamed), 100):
+                try:
+                    found.update(nexus.mod_names(unnamed[i:i + 100]))
+                except Exception as e:  # noqa: BLE001 - network boundary: the mod id stands in for the name
+                    self.notify("log", f"Mod names: {e}")
+            for link in links:
+                link["name"] = link["name"] or found.get(link["mod_id"], {}).get("name") or f"Nexus mod {link['mod_id']}"
+            for link in links:
+                try:
+                    self._add(link)
+                except Exception as e:  # noqa: BLE001 - one bad mod must not stop the others
+                    self.notify("log", f"{link['name'] or link['mod_id']}: {e}")
+        self.bg(run)
+        return len(links)
+
+    # ---------- app update ----------
+    def update_app(self, rel=None):
+        """Get this app's newest version from GitHub. With no rel it only looks: the window asks, then calls this again
+        with the release. The exe is downloaded and must pass a Defender scan; a script swaps it in once the window has
+        closed (Windows cannot overwrite a running exe) and starts it. From source: git pull. Every outcome, errors
+        too, is an "update" event, so the window can turn its button back on."""
+        try:
+            if not getattr(sys, "frozen", False):
+                r = subprocess.run(["git", "pull", "--ff-only"], cwd=Path(__file__).resolve().parents[1], capture_output=True,
+                                   text=True, errors="replace", env={**os.environ, "LC_ALL": "C"},  # English: read below
+                                   creationflags=scan.NO_WINDOW, check=False)
+                if r.returncode:
+                    raise RuntimeError(f"git pull failed: {(r.stderr or r.stdout).strip()}")
+                return self.notify("update", {"text": "You have the newest version." if "Already up to date" in r.stdout else
+                                              "Updated from GitHub. Close and open the app to use the new version."})
+            if rel is None:
+                rel = app_latest()
+                return self.notify("update", {"ask": rel} if rel else {"text": f"You have the newest version ({VERSION})."})
+            self.notify("update", {"text": f"Downloading version {rel['tag']}…", "busy": True})
+            folder = self.store.root / "update"
+            folder.mkdir(exist_ok=True)
+            new = download(rel["url"], folder)
+            ok, why = scan.scan(new)
+            if ok is not True:  # a file Defender could not scan does not run either
+                new.unlink(missing_ok=True)
+                raise RuntimeError(f"Microsoft Defender found {why}" if ok is False else
+                                   f"Microsoft Defender could not scan the new version ({why})")
+            # PYINSTALLER_RESET_ENVIRONMENT: else the new exe takes the old one's temp folder, which is deleted on exit
+            subprocess.Popen([str(SYS32 / "WindowsPowerShell/v1.0/powershell.exe"), "-NoProfile", "-NonInteractive", "-Command", SWAP],
+                             env={**os.environ, "CP_NEW": str(new), "CP_EXE": sys.executable, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
+                             creationflags=scan.NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)  # DETACHED_PROCESS: PowerShell runs nothing
+            self.notify("update", {"text": f"Installing version {rel['tag']}. The app restarts by itself.", "restart": True})
+        except Exception as e:  # noqa: BLE001 - shown to the user
+            self.notify("update", {"text": f"Update failed: {e}"})
 
     def merge_packs(self, names, new):
         """One pack with every mod of `names`. A mod in several packs is on if one of them turns it on, and takes
