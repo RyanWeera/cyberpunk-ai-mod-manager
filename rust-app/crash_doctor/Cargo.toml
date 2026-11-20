@@ -1,0 +1,16 @@
+[package]
+name = "crash_doctor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+regex = "1.13.2"
+serde_json = "1.0.154"
+shared = { version = "2.0.0", path = "../shared" }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_ProcessStatus", "Win32_System_Diagnostics_Debug", "Win32_System_Diagnostics_ToolHelp", "Win32_UI_WindowsAndMessaging", "Win32_Storage_FileSystem", "Win32_System_Memory", "Win32_Security", "Win32_System_Kernel", "Win32_System_SystemInformation", "Win32_System_LibraryLoader", "Win32_System_Time", "Win32_Globalization"] }
+zip = { version = "9.8.0", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+testkit = { path = "../testkit" }

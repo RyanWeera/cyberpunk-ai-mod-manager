@@ -20,3 +20,20 @@ jobs:
           python-version: "3.12"
       - name: Unit tests
         run: python -m unittest discover -s tests -t .
+
+  rust:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: rust-app
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: rustup update stable && rustup component add clippy
+      - name: Unit tests
+        run: cargo test --workspace
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings

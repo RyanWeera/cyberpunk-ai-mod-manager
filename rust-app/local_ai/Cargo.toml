@@ -1,0 +1,16 @@
+[package]
+name = "local_ai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+downloads = { version = "2.0.0", path = "../downloads" }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+shared = { version = "2.0.0", path = "../shared" }
+ureq = { version = "3.5.2", features = ["json"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+testkit = { path = "../testkit" }

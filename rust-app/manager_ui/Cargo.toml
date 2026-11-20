@@ -1,0 +1,32 @@
+[package]
+name = "manager_ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# The exe name: a Cargo bin name cannot hold the spaces of "CP2077 AI Mod Manager".
+[[bin]]
+name = "cp2077-ai-mod-manager"
+path = "src/main.rs"
+
+[dependencies]
+ai_link = { version = "2.0.0", path = "../ai_link" }
+crash_doctor = { version = "2.0.0", path = "../crash_doctor" }
+downloads = { version = "2.0.0", path = "../downloads" }
+eframe = "0.37.0"
+egui_extras = { version = "0.37.0", features = ["image", "all_loaders"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
+installer = { version = "2.0.0", path = "../installer" }
+local_ai = { version = "2.0.0", path = "../local_ai" }
+regex = "1.13.2"
+rfd = "0.18.0"
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+shared = { version = "2.0.0", path = "../shared" }
+video_finder = { version = "2.0.0", path = "../video_finder" }
+virus_scan = { version = "2.0.0", path = "../virus_scan" }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Pipes", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading", "Win32_UI_Shell", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Registry", "Win32_UI_WindowsAndMessaging", "Win32_System_Ole", "Win32_System_Diagnostics_Debug", "Win32_System_LibraryLoader", "Win32_System_Kernel", "Win32_Security_Cryptography", "Win32_System_Console", "Win32_System_Time"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+testkit = { path = "../testkit" }

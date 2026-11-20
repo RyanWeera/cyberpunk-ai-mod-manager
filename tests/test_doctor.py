@@ -59,7 +59,7 @@ def minidump(modules, crash_addr, stack_words, tid=7, code=0xC0000005, more_thre
     if crash_addr is not None:
         head += struct.pack("<IIIIQQ", tid, 0, code, 0, 0, crash_addr)
     return (head + struct.pack("<I", len(modules)) + b"".join(struct.pack("<QIIII", b, n, 0, 0, r) + b"\0" * 84
-                                                               for (b, n, _), r in zip(modules, rvas))
+                                                               for (b, n, _), r in zip(modules, rvas, strict=True))
             + names + struct.pack("<I", len(threads)) + entries + stacks)
 
 

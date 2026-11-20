@@ -201,7 +201,7 @@ class Controller:
             return next((n for i, n in others.items() if i in reqs or len(key(n)) >= 6 and key(n) in key(d["name"])), None)
 
         with ThreadPoolExecutor(6) as pool:  # ponytail: 24 candidates cap, enough for all but the biggest hub mods
-            for d, other in zip(found[:24], pool.map(partner, found[:24])):
+            for d, other in zip(found[:24], pool.map(partner, found[:24]), strict=True):
                 if other:
                     self.notify("log", f"Adding the compatibility patch '{d['name']}' for {name} and {other}.")
                     self._add({"type": "nexus", "mod_id": d["mod_id"]})

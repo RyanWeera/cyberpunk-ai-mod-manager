@@ -1,0 +1,16 @@
+[package]
+name = "video_finder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+downloads = { version = "2.0.0", path = "../downloads" }
+regex = "1.13.2"
+serde_json = "1.0.154"
+shared = { version = "2.0.0", path = "../shared" }
+ureq = "3.5.2"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+testkit = { path = "../testkit" }

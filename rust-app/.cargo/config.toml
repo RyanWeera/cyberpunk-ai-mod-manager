@@ -1,0 +1,3 @@
+# Tests share global state (HTTP mocks, env vars), like the Python suite, so they run one at a time.
+[env]
+RUST_TEST_THREADS = "1"

@@ -1,0 +1,10 @@
+[package]
+name = "testkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde_json = "1.0.154"
+shared = { version = "2.0.0", path = "../shared" }
+zip = { version = "9.8.0", default-features = false, features = ["deflate"] }

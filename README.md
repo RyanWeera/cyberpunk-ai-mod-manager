@@ -13,6 +13,12 @@ A Windows mod manager for Cyberpunk 2077 that sets your mods up for you and fixe
 
 **One file. No installer. No Python.** Windows 11 (Windows 10 works for most mods). The button always gives you the newest version.
 
+**New in 2.0:** the whole app is rebuilt in Rust, with a new window in the Cyberpunk, Arasaka and Militech styles.
+It keeps every feature, your mods and your settings. With a free Nexus account, the app clicks
+**Slow download** for you, so a whole mod pack downloads with no clicks after one Nexus login. The app always adds
+the Advanced Crash Reporter mod, so a crash report names the mod that caused it. Version 1.x users get 2.0 with the
+**Update** button in the Settings tab.
+
 ![Mods tab](docs/screenshot.png)
 
 ## Get started in 3 steps
@@ -38,7 +44,7 @@ The yellow banner at the top of the app shows which set-up steps are still missi
 - **Find mod from video.** Paste a YouTube, TikTok, Instagram or other video link. The app reads the video's description or caption and lists the mods it links or names, and you add them with one click. YouTube works best, because its descriptions have the mod links. The app does not watch the video, so a mod that is only shown on screen is not found.
 - **Automatic set-up.** Every archive is unpacked and each file goes to the folder the game loads it from (`archive/pc/mod`, `r6/scripts`, `r6/tweaks`, `red4ext/plugins`, Cyber Engine Tweaks mods, REDmod). FOMOD installers run with their default choices. Missing frameworks are installed by themselves.
 - **No-click frameworks.** RED4ext, Cyber Engine Tweaks, redscript, ArchiveXL, TweakXL, Codeware, Input Loader and Mod Settings download from their GitHub releases, with no account.
-- **Crash doctor.** The app watches the game. After a crash it reads the exit code, the game's crash dump, Windows crash events and the framework logs (redscript, RED4ext, ArchiveXL, TweakXL, CET) to find the mod that caused it. It also lists the mods found on the crashing thread's call path, explains the Windows error code in plain words, and reads the report of the [Advanced Crash Reporter](https://www.nexusmods.com/cyberpunk2077/mods/34403) mod when you have it installed.
+- **Crash doctor.** The app watches the game. After a crash it reads the exit code, the game's crash dump, Windows crash events and the framework logs (redscript, RED4ext, ArchiveXL, TweakXL, CET) to find the mod that caused it. It also lists the mods found on the crashing thread's call path, explains the Windows error code in plain words, and reads the report of the [Advanced Crash Reporter](https://www.nexusmods.com/cyberpunk2077/mods/34403) mod. The app adds that mod by itself when your Nexus key is set and before each launch; a crash report is ready from the next game start.
 - **Freezes.** When the game stops responding for about 25 seconds (20 seconds after Windows shows "Not responding"), the app takes a snapshot of every game thread. If the game never comes back, the Crash doctor names the mod code found on the game's main thread (the first thread in the snapshot).
 - **More crash clues.** The Crash doctor also shows where in a DLL mod the crash happened (and the function name when the mod ships its `.pdb` file), DLL mods that take more than 3 seconds to load, mods you installed by hand that changed in the last 7 days, and a game update since the last launch that worked (frameworks often need an update after a patch).
 - **Crash report.** **Save crash report** (Crash doctor tab) writes one text file about the last crash or freeze and your mods, to share with a mod author. Folder paths of your PC are hidden in it. **Copy for an AI** puts the same report on your clipboard as a question for an AI chat. After each crash the app keeps a zip of the crash report and the mod logs (the game deletes old logs); **Open saved crash logs** shows them.
@@ -46,11 +52,11 @@ The yellow banner at the top of the app shows which set-up steps are still missi
   - More than one fix (update, turn off, change the load order): you pick.
   - Every fix can be undone.
   - No clue in the logs: "Find the bad mod for me" turns half of the mods off per game start until the bad one is found. A mod goes off together with the mods that need it, so the game still starts. A launch that ends sooner than the crash came before does not count.
-  - No clue in the logs and no Advanced Crash Reporter yet: the app offers to install it.
+  - No clue in the logs and no Advanced Crash Reporter yet (for example, no Nexus key): the app offers to install it.
   - Each crash gets an ID (the module and place it crashed in), so you can see when the same crash comes back.
   - A mod that also logs errors in launches without a crash is not blamed for the crash.
 - **Styles.** Pick Cyberpunk (yellow), Arasaka (red) or Militech (amber) in the Settings tab. The window changes at once.
-- **Updates.** Click **Update** in the Settings tab. When GitHub has a newer release, the app asks first. It then downloads that release's exe and scans it with Microsoft Defender (if Defender finds a threat or cannot scan it, nothing changes). Then it closes, swaps the exe and opens again. When you run the app from source, the button runs `git pull`.
+- **Updates.** Click **Update** in the Settings tab. When GitHub has a newer release, the app asks first. It then downloads that release's exe and scans it with Microsoft Defender (if Defender finds a threat or cannot scan it, nothing changes). Then it closes, swaps the exe and opens again.
 - **Mod profiles (mod packs).** Keep different sets of mods for different play-throughs. In the Mods page, turn on the mods you want, open the **•••** menu at the top right and pick **Save this list as a pack…**: the pack keeps which mods are on and their order. Pick a pack next to **Launch game** to play with it, or pick **Use the picked pack** in the same menu to set the list to it and apply it to the game now. A pack turns off the mods it does not list, but a framework that is on stays on. Each Nexus collection you add is a pack too, and **Merge packs** makes one pack from several. Mods stay installed when you switch, so switching is fast.
 - **Load order and conflicts.** Mods lower in the list win. Archive conflicts are found by reading the `.archive` file indexes, and you choose which mod wins. **Auto-sort** (Mods tab) sorts the list for you: frameworks first, each mod below the mods it needs, and a small patch below the big mod it changes. You can undo it in the Crash doctor tab.
 - **Use Claude or another AI app.** Give a mod link or a video link to Claude and ask it to set the mods up. The app is an MCP server: Claude Desktop, Claude Code, Cursor and other MCP apps can add Nexus Mods mods and collections and the core frameworks, sort the load order and check for problems through the app's window. Other GitHub links and direct download links you paste yourself. The **AI helpers** tab copies the setup for you. With a free Nexus account the **Slow download** rules [below](#nexus-mods-and-free-accounts) apply.
@@ -91,10 +97,12 @@ Requirements: Windows 11, or Windows 10 (the app uses the built-in `tar.exe` and
 ### Run from source
 
 ```
-python app.py
+cd rust-app
+cargo run --release -p manager_ui
 ```
 
-Python 3.12 or newer, standard library only.
+Version 2.0 and later are written in Rust (`rust-app/`). The 1.x Python version is still in the repository root
+(`python app.py`, Python 3.12 or newer, standard library only). Both versions use the same data folder.
 
 ## Where your data is
 
@@ -102,24 +110,30 @@ Mods, backups and settings (including your Nexus API key) are kept in `%LOCALAPP
 
 ## Development
 
-```
-python -m unittest discover -s tests -t .     # unit tests
-python -u tests/e2e_crash.py                  # real-crash end-to-end check (about 1 minute)
-python -u tests/ai_bench.py practice          # bug-chat benchmark with the real local AI (about 1 minute)
-```
-
-Build the exe:
+In `rust-app/`:
 
 ```
-python -m PyInstaller --noconfirm --clean --windowed --onefile --name "CP2077 AI Mod Manager" --icon manager_ui/icon.ico --add-data "manager_ui/icon.png;manager_ui" --paths . app.py
+cargo test --workspace                                     # unit tests
+cargo clippy --workspace --all-targets -- -D warnings      # lint
+cargo build -p manager_ui --example fake_game             # needed by the next line
+cargo test -p manager_ui --test e2e_crash -- --ignored     # real-crash end-to-end check (about 1 minute)
+cargo test -p downloads --test real_browser -- --ignored   # real hidden-browser Slow download click
 ```
+
+Build the exe with the GNU toolchain (`rustup default stable-x86_64-pc-windows-gnu`) and MinGW `windres` on PATH, so the exe gets its icon and version. Cargo writes `target\release\cp2077-ai-mod-manager.exe`; rename it to `CP2077 AI Mod Manager.exe`.
+
+```
+cargo build --release -p manager_ui
+```
+
+`rust-app/DIFFERENCES.md` lists where the Rust version behaves differently from the Python version. The local AI benchmark runs with Python: `python -u tests/ai_bench.py practice` (about 1 minute).
 
 Then put the exe and the local AI into one zip (PowerShell). The first line downloads the engine and the model into `local_ai` if they are not there yet (about 1.3 GB, SHA-256 checked):
 
 ```
 python -c "from local_ai import llm; llm.fetch(lambda what, done, total: None)"
 New-Item -ItemType Directory release\local_ai -Force
-Copy-Item "dist\CP2077 AI Mod Manager.exe" release\
+Copy-Item "rust-app\target\release\cp2077-ai-mod-manager.exe" "release\CP2077 AI Mod Manager.exe"
 Copy-Item -Recurse local_ai\engine, local_ai\model, local_ai\MODEL.md release\local_ai\
 Compress-Archive release\* CP2077.AI.Mod.Manager.zip -Force
 ```

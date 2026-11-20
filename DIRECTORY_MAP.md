@@ -14,6 +14,7 @@ Start here: `manager_ui/` (the root `app.py` only handles the single window and 
 - `tests/` - unittest suite with fake game folders, plus a real-crash end-to-end check
 - `docs/` - README screenshot
 - `tools/` - developer scripts: `CODE_MAP.md` generator
+- `rust-app/` - Rust port of the whole app (Cargo workspace, one crate per feature folder, egui window); plan and differences in its own notes
 - `.github/` - CI workflow that runs the tests on Windows
 
 ## Where to change things
@@ -31,3 +32,4 @@ Start here: `manager_ui/` (the root `app.py` only handles the single window and 
 - `graft/` - code graph cache
 - `__pycache__/` - Python bytecode
 - `.ruff_cache/` - linter cache
+- `rust-app/target/` - Rust build output
