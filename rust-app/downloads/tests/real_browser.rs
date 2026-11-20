@@ -30,7 +30,7 @@ fn click_on(page: &'static str) -> Option<String> {
         b.start("about:blank").map_err(|e| format!("start: {e}"))?;
         let mut t = b.open_tab(&url).map_err(|e| format!("open: {e}"))?;
         t.wait_ready_for(30).map_err(|e| format!("ready: {e}"))?;
-        assert_eq!(t.run_js(LOGIN_JS)?, 0);
+        assert_ne!(t.run_js(LOGIN_JS)?, 1, "a page with no sign-in link was taken as logged out");
         assert_eq!(t.run_js(HOOK_JS)?, 1);
         assert_eq!(t.run_js(CLICK_JS)?, 1, "the Slow download button was not clicked");
         t.wait_nxm_for(20)

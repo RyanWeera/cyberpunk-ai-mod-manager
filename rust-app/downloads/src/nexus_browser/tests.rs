@@ -200,6 +200,14 @@ fn test_success_hands_the_nxm_link_over() {
     assert!(r.closed.load(Ordering::SeqCst));
 }
 
+#[test]
+fn test_an_unknown_login_state_still_clicks() {
+    let (c, r) = clicker(script(&[2], Some("nxm://cyberpunk2077/mods/1/files/2")), true);
+    c.click(&job());
+    assert_eq!(got(&r.links), ["nxm://cyberpunk2077/mods/1/files/2"]);
+    assert_eq!(r.opens.load(Ordering::SeqCst), 1); // no login window
+}
+
 // test_browser.py ClickerFlow.test_a_skipped_job_loses_its_link
 #[test]
 fn test_a_skipped_job_loses_its_link() {
