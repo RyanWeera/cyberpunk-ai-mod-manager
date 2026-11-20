@@ -2,6 +2,7 @@
 plus the controller wiring (a waiting job goes to the clicker when Settings turns automatic clicks on)."""
 import contextlib
 import queue
+import socket
 import tempfile
 import time
 import threading
@@ -46,6 +47,35 @@ class WsFraming(unittest.TestCase):
     def test_ping_opcode(self):
         got, _ = ws_message(ws_frame(b"pin", 0x9))
         self.assertEqual(got[0], 0x9)
+
+    def test_unmasked_server_frames(self):
+        # the browser never masks its frames: FIN comes from byte 0, not from the mask bit
+        got, rest = ws_message(b"\x81\x05hello")
+        self.assertEqual(got, (1, True, b"hello"))
+        self.assertEqual(rest, b"")
+        got, _ = ws_message(b"\x01\x03hel")
+        self.assertEqual(got, (1, False, b"hel"))
+        got, _ = ws_message(b"\x81\x7e\x00\x80" + b"y" * 128)
+        self.assertEqual(got, (1, True, b"y" * 128))
+
+    def test_recv_reads_the_socket(self):
+        ws = nexus_browser.WS.__new__(nexus_browser.WS)
+        a, b = socket.socketpair()
+        self.addCleanup(a.close)
+        self.addCleanup(b.close)
+        ws.sock, ws.buf, ws.parts = a, b"", []
+        self.assertIsNone(ws.recv(0.2))
+        b.sendall(b"\x01\x03{\"a")  # a fragmented message, sent in two parts
+        threading.Timer(0.1, lambda: b.sendall(b"\x80\x04\":1}")).start()
+        self.assertEqual(ws.recv(2), '{"a":1}')
+        b.sendall(b"\x89\x00")  # a ping is answered with a pong, then reading goes on
+        self.assertIsNone(ws.recv(0.2))
+        a.settimeout(1)
+        got, _ = ws_message(b.recv(64))
+        self.assertEqual(got[0], 0xA)
+        b.close()
+        with self.assertRaises(ConnectionError):
+            ws.recv(1)
 
 
 class ScanNxm(unittest.TestCase):

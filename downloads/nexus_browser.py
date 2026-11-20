@@ -35,14 +35,14 @@ GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 LOGIN_JS = "(function(){return document.querySelector('a[href*=\"users/login\"]')?1:0})()"
 HOOK_JS = ("(function(){if(window.__nxmHook)return 1;window.__nxmHook=1;window.__nxm='';var re=/^nxm:/i;"
            "var cap=function(u){if(u&&re.test(u)&&!window.__nxm)window.__nxm=u;};var o=window.open;"
-           "window.open=function(u){cap(u);return o?o.apply(window,arguments);};"
+           "window.open=function(u){cap(u);return o?o.apply(window,arguments):null;};"
            "document.addEventListener('click',function(e){var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;"
            "if(a&&re.test(a.getAttribute('href')||''))cap(a.href);},true);return 1;})()")
 CLICK_JS = ("(function(){var els=document.querySelectorAll('a,button,input[type=\"button\"],input[type=\"submit\"]');"
             "for(var i=0;i<els.length;i++){var e=els[i],t=e.textContent||e.value||'';"
             "if(/slow\\s*download/i.test(t)&&e.offsetParent){e.scrollIntoView({block:'center'});e.click();return 1;}}return 0;})()")
 POLL_JS = "(function(){return window.__nxm||''})()"
-READY_JS = "document.readyState"
+READY_JS = "location.href!=='about:blank'&&document.readyState"  # a new tab is a "complete" about:blank before it loads the page
 GAP = 3  # seconds from one automatic click to the next: a big mod pack must not send Nexus a burst of clicks
 
 
@@ -87,8 +87,8 @@ def ws_message(buf):
     Masks are honoured when set, so the same parser reads client and server frames."""
     if len(buf) < 2:
         return None, buf
-    op, second = buf[0] & 0x0F, buf[1]
-    fin, n, pos = bool(second & 0x80), second & 0x7F, 2
+    op, fin, second = buf[0] & 0x0F, bool(buf[0] & 0x80), buf[1]  # FIN is bit 7 of byte 0, MASK is bit 7 of byte 1
+    n, pos = second & 0x7F, 2
     if n == 126:
         if len(buf) < 4:
             return None, buf
@@ -161,6 +161,10 @@ class WS:
                         text = b"".join(self.parts).decode("utf-8", "replace")
                         self.parts = []
                         return text
+                part = self.sock.recv(65536)  # no complete frame yet: wait up to `timeout` for more bytes
+                if not part:
+                    raise ConnectionError("the browser closed the WebSocket")
+                self.buf += part
             except TimeoutError:
                 return None
 
