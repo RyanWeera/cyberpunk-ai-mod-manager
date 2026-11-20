@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import re
+import string
 import subprocess
 import time
 import urllib.parse
@@ -121,6 +122,7 @@ def thumbnails(urls, folder, w, h):
 
 def download(url, folder, progress=None, headers=None):
     """Download url into folder. progress(done_bytes, total_bytes) is called about twice a second."""
+    url = urllib.parse.quote(url, safe=string.punctuation)  # Nexus CDN links have raw spaces; keeps %xx as it is
     req = urllib.request.Request(url, headers={**UA, **(headers or {})})
     with urllib.request.urlopen(req, timeout=60) as r:
         if urllib.parse.urlparse(r.url).scheme != "https":  # also catches an https link that redirects to http

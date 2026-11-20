@@ -14,6 +14,20 @@ class FileNames(unittest.TestCase):
         self.assertEqual(ascii_name("..\\..\\x.zip"), "_.._x.zip")
         self.assertEqual(ascii_name("..."), "download.zip")
 
+    def test_spaces_in_a_cdn_link_are_quoted(self):
+        import io
+        import tempfile
+
+        from downloads import fetch
+
+        resp = io.BytesIO(b"ok")
+        resp.headers, resp.url = {}, "https://cf-files.nexusmods.com/3333/21307/Zenitex%20M50%20Gas%20Mask-21307-2.zip"
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(fetch.urllib.request, "urlopen", return_value=resp) as op:
+            dest = fetch.download("https://cf-files.nexusmods.com/3333/21307/Zenitex M50 Gas Mask-21307-2.zip?md5=a%2Fb&expires=1", d)
+            self.assertEqual(op.call_args.args[0].full_url,
+                             "https://cf-files.nexusmods.com/3333/21307/Zenitex%20M50%20Gas%20Mask-21307-2.zip?md5=a%2Fb&expires=1")
+            self.assertEqual(dest.name, "Zenitex M50 Gas Mask-21307-2.zip")
+
 
 class AppUpdate(unittest.TestCase):
     def test_only_a_newer_release_counts(self):

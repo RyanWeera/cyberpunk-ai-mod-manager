@@ -119,7 +119,7 @@ def start(wait=180):
         if running():
             return
         if not ready():
-            raise RuntimeError("The local AI files are missing. Click 'Download local AI' in the AI helpers tab.")
+            raise RuntimeError("The local AI files are missing. Click 'Check local AI' in the AI helpers tab to download them.")
         with socket.socket() as s:
             s.bind(("127.0.0.1", 0))
             port = s.getsockname()[1]
