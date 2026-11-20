@@ -1053,7 +1053,6 @@ impl Window {
             ("virus_scan", st.virus_scan, "Scan every download for viruses with Microsoft Defender (turn off to go faster with many mods)"),
             ("auto_fix", st.auto_fix, "After a crash, fix a problem by myself when it has only one fix"),
             ("include_optional", st.include_optional, "Tick the optional mods of a mod pack at first"),
-            ("auto_click", st.auto_click, "Click 'Slow download' on Nexus for me in a hidden browser (a free account logs in to Nexus once, then no file needs a click)"),
         ] {
             let mut v = on;
             if ui.checkbox(&mut v, text).changed() {

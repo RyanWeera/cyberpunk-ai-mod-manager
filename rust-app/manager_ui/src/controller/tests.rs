@@ -713,20 +713,20 @@ fn update_app_swaps_in_the_newest_release_exe() {
     // test_update_app_swaps_in_the_newest_release_exe
     let fx = Fx::new();
     let own = format!("https://github.com/{}/releases/download/v9.0.0/a.exe", fetch::APP_REPO);
-    let latest = format!("https://api.github.com/repos/{}/releases/latest", fetch::APP_REPO);
+    let latest = format!("https://api.github.com/repos/{}/releases", fetch::APP_REPO);
     let release = |tag: &'static str| {
         let (own, latest) = (own.clone(), latest.clone());
         move |req: &Request| {
             if req.url == latest {
-                return Some(ok(json!({"tag_name": tag, "assets": [{"name": "a.exe", "browser_download_url": own}]})));
+                return Some(ok(json!([{"tag_name": tag, "assets": [{"name": "a.exe", "browser_download_url": own}]}])));
             }
             (req.url == own).then(|| file(&own, b"MZ".to_vec()))
         }
     };
-    fx.web(release("v9.0.0"));
+    fx.web(release("v9.0.0-manual"));
     let c = fx.ctl(fx.store(), 2);
     let updates = || fx.events("update");
-    let rel = json!({"tag": "v9.0.0", "url": own});
+    let rel = json!({"tag": "v9.0.0-manual", "url": own});
     c.update_app(None);
     assert_eq!(updates().last().unwrap(), &json!({"ask": rel})); // the window asks before anything downloads
     assert!(!lock(&fx.r.asked).iter().any(|(u, _)| *u == own));
@@ -993,21 +993,20 @@ fn wiring(fx: &Fx) -> Arc<Controller> {
 }
 
 #[test]
-fn waiting_job_is_clicked_by_the_hidden_browser() {
-    // Wiring.test_waiting_job_is_clicked_by_the_hidden_browser
+fn waiting_job_opens_the_page_for_the_users_click() {
+    // manual-click version: the hidden browser never clicks; the user clicks on the page the app opens
     let fx = Fx::new();
     let z = zip(fx.tmp.path().join("nx.zip"), &[("a.archive", "x")]);
     fx.web(nexus_route(mod_gql("Nx", "1", nx_files("1"), &[], "2024-06-01"), false, z));
     let c = wiring(&fx);
+    assert!(!lock(&c.store).settings.auto_click);
     c.add_links("https://www.nexusmods.com/cyberpunk2077/mods/55");
-    assert!(wait_for(|| !lock(&fx.r.clicked).is_empty()));
-    assert_eq!(job0(&c)["status"], "Clicking 'Slow download' for you");
-    assert!(lock(&fx.r.opened).is_empty());
+    assert!(wait_for(|| !lock(&fx.r.opened).is_empty()));
+    assert!(lock(&fx.r.opened)[0].contains("mods/55?tab=files&file_id="), "{:?}", lock(&fx.r.opened));
     c.handle_nxm("nxm://cyberpunk2077/mods/55/files/7?key=K&expires=1").unwrap();
     wait_idle(&c);
     assert_eq!(job0(&c)["state"], "done");
-    let clicked: Vec<Value> = lock(&fx.r.clicked).iter().map(|j| j["src"]["mod_id"].clone()).collect();
-    assert_eq!(clicked, [json!(55)]);
+    assert!(lock(&fx.r.clicked).is_empty());
 }
 
 #[test]

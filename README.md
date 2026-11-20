@@ -3,7 +3,7 @@
 A Windows mod manager for Cyberpunk 2077 that sets your mods up for you and fixes crashes.
 
 <p align="center">
-  <a href="https://github.com/RyanWeera/cyberpunk-ai-mod-manager/releases/latest/download/CP2077.AI.Mod.Manager.exe"><img src="https://img.shields.io/badge/Download_for_Windows-.exe-fcee0a?style=for-the-badge&logo=windows&logoColor=black&labelColor=fcee0a&color=0e1016" alt="Download for Windows"></a>
+  <a href="https://github.com/RyanWeera/cyberpunk-ai-mod-manager/releases/download/v2.0.0-manual/CP2077.AI.Mod.Manager.exe"><img src="https://img.shields.io/badge/Download_for_Windows-.exe-fcee0a?style=for-the-badge&logo=windows&logoColor=black&labelColor=fcee0a&color=0e1016" alt="Download for Windows"></a>
 </p>
 <p align="center">
   <a href="https://github.com/RyanWeera/cyberpunk-ai-mod-manager/releases/latest"><img src="https://img.shields.io/github/v/release/RyanWeera/cyberpunk-ai-mod-manager?label=latest" alt="Latest version"></a>
@@ -14,8 +14,8 @@ A Windows mod manager for Cyberpunk 2077 that sets your mods up for you and fixe
 **One file. No installer. No Python.** Windows 11 (Windows 10 works for most mods). The button always gives you the newest version.
 
 **New in 2.0:** the whole app is rebuilt in Rust, with a new window in the Cyberpunk, Arasaka and Militech styles.
-It keeps every feature, your mods and your settings. With a free Nexus account, the app clicks
-**Slow download** for you, so a whole mod pack downloads with no clicks after one Nexus login. The app always adds
+It keeps every feature, your mods and your settings. This is the manual-click version: with a free Nexus
+account, you click **Slow download** on each file's Nexus page, and the app does the rest. The app always adds
 the Advanced Crash Reporter mod, so a crash report names the mod that caused it. Version 1.x users get 2.0 with the
 **Update** button in the Settings tab.
 
@@ -29,7 +29,7 @@ the Advanced Crash Reporter mod, so a crash report names the mod that caused it.
    - Click **Find it for me** to find your Cyberpunk 2077 folder (Steam, GOG or Epic).
    - Click **Get my key**, copy your personal API key from Nexus, and paste it. Free accounts have one too.
    - Click **Use this app for Nexus downloads**, so the download buttons on Nexus send files to the app.
-3. **Add mods and play.** In **Add mods**, paste mod links or a collection link and click **Download and set up everything**. When the **Downloads** tab is finished, click **Launch game**. With a free Nexus account the app clicks **Slow download** for you after you log in to Nexus once (see [below](#nexus-mods-and-free-accounts), and read the warning there).
+3. **Add mods and play.** In **Add mods**, paste mod links or a collection link and click **Download and set up everything**. When the **Downloads** tab is finished, click **Launch game**. With a free Nexus account you click **Slow download** once for each file (see [below](#nexus-mods-and-free-accounts)).
 
 The yellow banner at the top of the app shows which set-up steps are still missing.
 
@@ -56,7 +56,7 @@ The yellow banner at the top of the app shows which set-up steps are still missi
   - Each crash gets an ID (the module and place it crashed in), so you can see when the same crash comes back.
   - A mod that also logs errors in launches without a crash is not blamed for the crash.
 - **Styles.** Pick Cyberpunk (yellow), Arasaka (red) or Militech (amber) in the Settings tab. The window changes at once.
-- **Updates.** Click **Update** in the Settings tab. When GitHub has a newer release, the app asks first. It then downloads that release's exe and scans it with Microsoft Defender (if Defender finds a threat or cannot scan it, nothing changes). Then it closes, swaps the exe and opens again.
+- **Updates.** Click **Update** in the Settings tab. When GitHub has a newer manual-click release (a tag that ends in `-manual`), the app asks first. It then downloads that release's exe and scans it with Microsoft Defender (if Defender finds a threat or cannot scan it, nothing changes). Then it closes, swaps the exe and opens again.
 - **Mod profiles (mod packs).** Keep different sets of mods for different play-throughs. In the Mods page, turn on the mods you want, open the **•••** menu at the top right and pick **Save this list as a pack…**: the pack keeps which mods are on and their order. Pick a pack next to **Launch game** to play with it, or pick **Use the picked pack** in the same menu to set the list to it and apply it to the game now. A pack turns off the mods it does not list, but a framework that is on stays on. Each Nexus collection you add is a pack too, and **Merge packs** makes one pack from several. Mods stay installed when you switch, so switching is fast.
 - **Load order and conflicts.** Mods lower in the list win. Archive conflicts are found by reading the `.archive` file indexes, and you choose which mod wins. **Auto-sort** (Mods tab) sorts the list for you: frameworks first, each mod below the mods it needs, and a small patch below the big mod it changes. You can undo it in the Crash doctor tab.
 - **Use Claude or another AI app.** Give a mod link or a video link to Claude and ask it to set the mods up. The app is an MCP server: Claude Desktop, Claude Code, Cursor and other MCP apps can add Nexus Mods mods and collections and the core frameworks, sort the load order and check for problems through the app's window. Other GitHub links and direct download links you paste yourself. The **AI helpers** tab copies the setup for you. With a free Nexus account the **Slow download** rules [below](#nexus-mods-and-free-accounts) apply.
@@ -66,13 +66,13 @@ The yellow banner at the top of the app shows which set-up steps are still missi
 
 ## Nexus Mods and free accounts
 
-Nexus Mods gives a free account a download only after a person clicks **Slow download** on the website. With a free account, the app clicks it for you in a hidden Brave, Edge or Chrome browser (Brave when it is installed):
+Nexus Mods gives a free account a download only after a person clicks **Slow download** on the website. The Nexus terms do not allow a program to click it, so in this version you click it yourself:
 
-1. The first time, a browser window opens: log in to Nexus there once. The app keeps that login in its data folder.
-2. For each file, the app opens the file's page in the hidden browser, clicks **Slow download** and gets the download link. It waits 3 seconds between clicks, so a big mod pack does not send Nexus all its clicks at once.
-3. The app downloads, scans, installs and sets up the file, then goes to the next one.
+1. For each file, the app opens the file's Nexus page in your normal browser, one at a time.
+2. You click **Slow download**. Nexus sends the download link to the app.
+3. The app downloads, scans, installs and sets up the file, then opens the page of the next one.
 
-**Warning:** the Nexus terms do not allow a program to click **Slow download**. Nexus can ban accounts that do this, mainly for many downloads. To click yourself, turn off **Click 'Slow download' on Nexus for me** in **Settings**. Then the app opens the Nexus page of each file in your normal browser, one at a time, and you click **Slow download**. The app also does this when the hidden click fails (for example, no login, or the Nexus page changed).
+A Nexus Premium account needs no clicks.
 
 The download bar shows how many clicks are left. If **Slow download** does nothing, another app (such as Vortex) gets the Nexus links: open **Settings** and click **Fix it: use this app** in the **Download button** row. That row names the app that gets the links now.
 

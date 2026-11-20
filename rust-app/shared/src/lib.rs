@@ -258,7 +258,8 @@ impl Store {
             staging,
             backups,
             file,
-            settings: d.settings,
+            // manual-click version: the user clicks 'Slow download'; the app never clicks it
+            settings: Settings { auto_click: false, ..d.settings },
             mods: d.mods,
             deployed: d.deployed,
             deploy_game: d.deploy_game,
@@ -373,7 +374,7 @@ mod tests {
         std::fs::write(t.join("state.json"), py).unwrap();
         let s = Store::open(&t).unwrap();
         assert!(!s.modlist_tracked, "a v1.0.0 file has no modlist_tracked");
-        assert!(!s.settings.virus_scan && s.settings.auto_click && s.settings.extra["future"] == 3);
+        assert!(!s.settings.virus_scan && !s.settings.auto_click && s.settings.extra["future"] == 3); // never on here
         let m = &s.mods[0];
         assert_eq!((m.version.as_str(), m.framework.clone(), m.extra["nexus_status"].as_str()), ("2.1", None, Some("x")));
         assert_eq!(s.deployed["x"], None);

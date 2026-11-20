@@ -65,19 +65,19 @@ fn test_spaces_in_a_cdn_link_are_quoted() {
 fn test_only_a_newer_release_counts() {
     // Python patches VERSION to 1.1.0; here the tags are made from the real version.
     let v: Vec<u64> = shared::VERSION.split('.').map(|n| n.parse().unwrap()).collect();
-    let newer = format!("v{}.{}.0", v[0], v[1] + 10); // "2.10.0" > "2.0.0" only when compared as numbers
+    let newer = format!("v{}.{}.0-manual", v[0], v[1] + 10); // "2.10.0" > "2.0.0" only when compared as numbers
     let rel = |tag: &str, url: &str| {
         json!({"tag_name": tag, "assets": [{"name": "Notes.txt", "browser_download_url": "https://x/n"},
                                            {"name": "CP2077.AI.Mod.Manager.exe", "browser_download_url": url}]})
     };
     let exe = |tag: &str| format!("https://github.com/{}/releases/download/{tag}/CP2077.AI.Mod.Manager.exe", fetch::APP_REPO);
-    for (tag, want) in [(format!("v{}", shared::VERSION), None), ("v0.99.99".to_string(), None), (newer.clone(), Some(exe(&newer)))] {
-        let answer = rel(&tag, &exe(&tag));
+    for (tag, want) in [(format!("v{}-manual", shared::VERSION), None), ("v0.99.99-manual".to_string(), None), (newer.clone(), Some(exe(&newer)))] {
+        let answer = json!([rel("v99.0.0", &exe("v99.0.0")), rel(&tag, &exe(&tag))]); // the automatic build is skipped
         let _m = mock(move |_| answer.clone());
         let got = fetch::app_latest().unwrap();
         assert_eq!(got, want.map(|url| json!({"tag": tag, "url": url})), "{tag}");
     }
-    let answer = rel("v99.0.0", "https://evil.example/a.exe");
+    let answer = json!([rel("v99.0.0-manual", "https://evil.example/a.exe")]);
     let _m = mock(move |_| answer.clone());
     assert!(fetch::app_latest().is_err()); // an exe from anywhere else is not used
 }

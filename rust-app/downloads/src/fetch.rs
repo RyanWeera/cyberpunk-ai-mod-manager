@@ -202,9 +202,12 @@ fn ver(s: &str) -> Vec<u64> {
     NUM.find_iter(s).map(|m| m.as_str().parse().unwrap_or(u64::MAX)).collect()
 }
 
-/// {"tag", "url"} of the exe in this app's newest GitHub release, or None when this version is the newest.
+/// {"tag", "url"} of the exe in this app's newest manual-click release (its tag ends in "-manual"), or None when
+/// this version is the newest. The other releases hold the automatic-click build, so an update never switches to it.
 pub fn app_latest() -> Result<Option<Value>, String> {
-    let d = http_json(&format!("https://api.github.com/repos/{APP_REPO}/releases/latest"), None, &[], 30)?;
+    let all = http_json(&format!("https://api.github.com/repos/{APP_REPO}/releases"), None, &[], 30)?;
+    let manual = |r: &&Value| r["tag_name"].as_str().is_some_and(|t| t.ends_with("-manual"));
+    let Some(d) = all.as_array().into_iter().flatten().find(manual) else { return Ok(None) };
     let tag = d["tag_name"].as_str().ok_or("GitHub answered a release without a tag")?;
     if ver(tag) <= ver(shared::VERSION) {
         return Ok(None);
