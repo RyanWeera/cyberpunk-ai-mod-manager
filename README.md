@@ -83,8 +83,8 @@ If you click a "Mod Manager Download" button on Nexus yourself (not on a page th
 ## Download, check and remove
 
 - **Every version:** the [Releases](../../releases) page.
-- **Check the file (optional):** each release lists the zip's SHA-256. In PowerShell, run `Get-FileHash .\CP2077.AI.Mod.Manager.zip` and compare. Unpack the zip to a folder of its own and start the exe in it.
-- **Update:** click **Update** in the Settings tab (from v1.2.0 on). Or close the app and replace the exe with the newest manual-click exe from the [Releases](../../releases) page (its tag ends in `-manual`). Your mods and settings stay. If the new exe is in a different folder or has a different name, click **Fix it: use this app** in the Settings tab, and copy the AI app setup again (**AI helpers** tab). The version is shown in the title bar.
+- **Check the file (optional):** each release lists the exe's SHA-256. In PowerShell, run `Get-FileHash .\CP2077.AI.Mod.Manager.exe` and compare.
+- **Update:** click **Update** in the Settings tab (from v2.0.0-manual on). Or close the app and replace the exe with the newest manual-click exe from the [Releases](../../releases) page (its tag ends in `-manual`). Your mods and settings stay. If the new exe is in a different folder or has a different name, click **Fix it: use this app** in the Settings tab, and copy the AI app setup again (**AI helpers** tab). The version is shown in the title bar.
 - **Remove:**
   1. In the **Mods** tab, clear the **Search** box, click any mod, press **Ctrl+A**, then click **Turn on / off** until every row shows ○. This takes the mods' files out of the game folder and puts back the game files (and your own `modlist.txt`) that they replaced.
   2. Wait until the status bar says the mods are set up in the game folder, then close the app.
