@@ -240,6 +240,31 @@ class FindBrowser(unittest.TestCase):
             self.assertEqual(nexus_browser.Browser(tmp / "p").profile, tmp / "p")  # Edge keeps the old folder
 
 
+class CloseTab(unittest.TestCase):
+    def test_plain_text_close_answer_is_not_an_error(self):
+        """Chrome answers /json/close with plain text; closing the tab must not fail on it."""
+        import http.server
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"Target is closing")
+
+            def log_message(self, *a):
+                pass
+
+        srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        b = nexus_browser.Browser(tempfile.mkdtemp())
+        b.port = srv.server_address[1]
+        tab = mock.Mock(target={"id": "T1"})
+        b.close(tab)  # must not raise
+        tab.ws.close.assert_called_once()
+
+
 class Wiring(unittest.TestCase):
     """The controller hands waiting jobs to the clicker, not to the user's browser, when the setting is on."""
 

@@ -313,9 +313,9 @@ class Browser:
         return False
 
     def close(self, tab):
-        try:
-            self._http(f"/json/close/{tab.target['id']}", timeout=3)
-        except (OSError, urllib.error.URLError):
+        try:  # the answer is plain text ("Target is closing"), not JSON: read it, do not parse it
+            urllib.request.urlopen(f"http://127.0.0.1:{self.port}/json/close/{tab.target['id']}", timeout=3).read()
+        except OSError:  # URLError is an OSError
             pass
         tab.ws.close()
 
